@@ -1,4 +1,5 @@
 Likeness - a character editor drawn over RaceMenu
+Version 1.0.0
 
 RaceMenu stays underneath and does all the real work. Likeness draws its own editor over the RaceSex Menu through the
 Apocrypha Menu Framework (or SKSE Menu Framework 3). F4 switches between Likeness and RaceMenu's own interface.
