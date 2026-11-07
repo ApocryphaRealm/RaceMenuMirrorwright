@@ -159,7 +159,7 @@ namespace editor
 				"igIsKeyPressed_Bool", "igIsItemHovered", "igSetTooltipV", "igPushItemWidth", "igPopItemWidth",
 				"igOpenPopup_Str", "igBeginPopupModal", "igEndPopup", "igCloseCurrentPopup", "igSetItemDefaultFocus",
 				"igInputTextWithHint", "igBeginDisabled", "igEndDisabled", "igGetContentRegionAvail", "igBeginTable", "igTableNextColumn",
-				"igEndTable", "igIsWindowAppearing", "igTextColoredV", "igIsItemFocused", "igPushStyleColor_Vec4", "igPopStyleColor", "igPushStyleVar_Float", "igPopStyleVar",
+				"igEndTable", "igIsWindowAppearing", "igDummy", "igTextColoredV", "igIsItemFocused", "igPushStyleColor_Vec4", "igPopStyleColor", "igPushStyleVar_Float", "igPopStyleVar",
 				"igSliderFloat", "igIsKeyDown_Nil", "igIsMouseDown_Nil", "igIsMouseClicked_Bool",
 				"igGetCursorScreenPos", "igGetWindowDrawList", "igGetFrameHeight", "igInvisibleButton", "igPushID_Str", "igPopID",
 				"ImDrawList_AddRectFilled", "ImDrawList_AddCircleFilled"
@@ -397,12 +397,15 @@ namespace editor
 			const std::string label = (changed ? "* " : "") + a_s.label;
 			if (a_s.colour)
 			{
-				const ImGuiMCP::ImVec4 c(((a_s.fill >> 16) & 0xFF) / 255.0F, ((a_s.fill >> 8) & 0xFF) / 255.0F, (a_s.fill & 0xFF) / 255.0F, 1.0F);
-				// a Font Awesome square in the row's colour (the icon font always has it)
-				static const bool haveFa = GetMenuFrameworkFunction<void*>("PushSolid") != nullptr;
-				if (haveFa) { FontAwesome::PushSolid(); }
-				ImGuiMCP::TextColored(c, "%s", Glyph(0xf0c8).c_str());
-				if (haveFa) { FontAwesome::Pop(); }
+				// A filled square drawn on the window's draw list (run 9: the icon-font square drew nothing). ImU32 is ABGR.
+				const float h = ImGuiMCP::GetFrameHeight() * 0.7F;
+				const ImGuiMCP::ImVec2 at = ImGuiMCP::GetCursorScreenPos();
+				const std::uint32_t abgr = 0xFF000000u | ((a_s.fill & 0xFF) << 16) | (a_s.fill & 0xFF00) | ((a_s.fill >> 16) & 0xFF);
+				if (auto* dl = ImGuiMCP::GetWindowDrawList())
+				{
+					ImGuiMCP::ImDrawListManager::AddRectFilled(dl, ImGuiMCP::ImVec2(at.x, at.y + 2.0F), ImGuiMCP::ImVec2(at.x + h, at.y + 2.0F + h), abgr, 2.0F, 0);
+				}
+				ImGuiMCP::Dummy(ImGuiMCP::ImVec2(h, h));
 				ImGuiMCP::SameLine();
 			}
 			ImGuiMCP::TextUnformatted(label.c_str());
@@ -787,7 +790,7 @@ namespace editor
 				}
 				ImGuiMCP::SameLine();
 				if (IconButton(fa::kCloseUp, NTR("RMM_CloseUp", "Close-up"))) { bridge::ToggleCloseUp(); }
-				ImGuiMCP::SameLine();
+				// second row (run 9: one row was wider than the panel and cut Turn right off)
 				if (IconButton(fa::kTurnLeft, NTR("RMM_TurnLeft", "Turn left"))) { bridge::TurnBy(-15.0F); }
 				ImGuiMCP::SameLine();
 				if (IconButton(fa::kTurnRight, NTR("RMM_TurnRight", "Turn right"))) { bridge::TurnBy(15.0F); }

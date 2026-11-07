@@ -41,4 +41,7 @@ Written as changes happen, not reconstructed afterwards (rule 61). Each version 
 - DevBench op=call and op=members accept CharGen.<function> for RaceMenu's Scaleform object.
 - Colour swatches show the character's live colour: the hair colour from the player's hair colour, a tint row from the player's tint of that kind (run 8: the row's own value showed near-black for red-orange hair); they follow a colour change.
 - Face close-up: Z, the pad's R3, the Close-up button or DevBench op=closeup move RaceMenu's camera halfway to the face and back (CharGen camera position).
+- The colour swatch is drawn as a filled square on the window (run 9: the icon-font square drew nothing); the hair colour read is logged, and a row with no colour from the character keeps its own.
+- The close-up sits fCloseUpDistance (50) from the head along the original view and fCloseUpRaise (9) higher, so the eyes are centred (run 9: halfway was ~20 units, nose clipping).
+- The scene panel's buttons sit in two rows, so Turn right is no longer cut off.
 - Renamed RaceMenu Mirrorwright (working name Likeness): DLL, INI, log and translation files are RaceMenuMirrorwright.*, the DevBench tool is mirrorwright.control.

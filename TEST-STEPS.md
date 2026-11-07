@@ -1,25 +1,18 @@
-# RaceMenu Mirrorwright 1.0.0 - ninth check: swatch colour, face close-up (Milestone 3), what is left
+# RaceMenu Mirrorwright 1.0.0 - tenth check: swatch back, close-up distance, scene panel layout
 
 Build: `7. current test builds\Skyrim - RaceMenu Mirrorwright\RaceMenu Mirrorwright 1.0.0` (repackaged), Line-SE-AE16,
 installed over `test RaceMenu Mirrorwright 1.0.0` inside the batch. RaceMenu + AMF on, Atelier and its patch off,
 Apprentice on, throwaway save, camera facing the front. Tool `mirrorwright.control`.
-Passed (runs 1-8): everything listed in run8\NOTES.md plus the earlier runs.
+Passed (runs 1-9): see run8\NOTES.md and run9; close-up on/off restores exactly; turning in close-up.
 
-## A. Fixes and the close-up
-
-1. Hair: the Hair Color row's square shows the hair's colour on screen (red-orange for index 5, not near-black). Move
-   the Hair Color slider: EXPECTED: the hair changes and, within about half a second, the square takes the new colour.
-   Eyes > Eye Shadow (a tint row): its square matches the eye shadow colour. Screenshot.
-2. `op=closeup` (or Z, or the pad's R3, or the Close-up button in the scene panel). EXPECTED: the camera moves in to
-   about half the distance, onto the face; log `close-up on: camera (x, y, z) -> (x', y', z')`. Again: back to where it
-   was (`close-up off`). Screenshots of both. If the camera does not move but the log line is there, report it (then
-   SetRaceSexCameraPos wants another argument shape). If the game crashes, send the crash log.
-3. Close-up on, then turn with E: the face turns in close-up. Close the menu and reopen: the camera starts normal.
-
-## B. Still untested (real mouse needed)
-
-4. Mouse drag on the open space over the character: smooth turn; a slider drag does not turn.
-5. Presets: Save `MW Test` (listed; .jslot in Overwrite\SKSE\Plugins\CharGen\Presets), save again (replace question),
-   Load (face returns; sliders follow after ~2 s?), Delete (gone).
-6. With Racemenu Rotation with Gamepad Support NG on: the stick turn is not doubled.
-7. No crash. Send the log and screenshots.
+1. Hair: the Hair Color row has a small filled square in the hair's colour (blond for index 4). Log: `swatch Hair
+   Color: hair colour form XXXXXXXX -> #RRGGBB` (or `no hair colour form ... stays`). Move Hair Color: the hair and,
+   within about half a second, the square change. Eyes > Eye Shadow: square matches. Screenshot.
+2. `op=closeup`. EXPECTED: the whole face from forehead to chin, eyes about the middle of the frame, no clipping;
+   log `close-up on: camera (...) -> (...)` with the new camera about 50 units from the player's x/y and 9 higher.
+   Again: back exactly. Screenshots. If too near or far, note it (the INI's fCloseUpDistance / fCloseUpRaise tune it).
+3. Scene panel: Light and Close-up on the first row, Turn left and Turn right on the second; nothing cut off at the right
+   edge. Screenshot.
+4. Still for a real mouse when possible: mouse drag turning; presets save / replace / load / delete; the stick with
+   Racemenu Rotation with Gamepad Support NG not doubled.
+5. No crash. Send the log and screenshots.

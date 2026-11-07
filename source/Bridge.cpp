@@ -17,6 +17,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <future>
+#include <cmath>
 
 // The RaceSex Menu, read and driven.
 //
@@ -463,7 +464,9 @@ namespace bridge
 					{
 						const auto& c = npc->headRelatedData->hairColor->color;
 						s.fill = (static_cast<std::uint32_t>(c.red) << 16) | (static_cast<std::uint32_t>(c.green) << 8) | c.blue;
+						logger::info("swatch {}: hair colour form {:08X} -> #{:06X}", s.label, npc->headRelatedData->hairColor->GetFormID(), s.fill);
 					}
+					else { logger::info("swatch {}: no hair colour form on the player; the row's own colour #{:06X} stays", s.label, s.fill); }
 					continue;
 				}
 				if (s.tintType < 0 || !tints) { continue; }
@@ -472,6 +475,7 @@ namespace bridge
 					if (tm && static_cast<int>(tm->type.underlying()) == s.tintType)
 					{
 						s.fill = (static_cast<std::uint32_t>(tm->color.red) << 16) | (static_cast<std::uint32_t>(tm->color.green) << 8) | tm->color.blue;
+						logger::debug("swatch {}: tint type {} -> #{:06X}", s.label, s.tintType, s.fill);
 						break;
 					}
 				}
@@ -1082,8 +1086,19 @@ namespace bridge
 			if (!g_closeUp)
 			{
 				std::copy(std::begin(c), std::end(c), std::begin(g_savedCam));
-				const double head[3] = { p[0], p[1], c[2] };   // the camera already sits at head height (run 8)
-				for (int i = 0; i < 3; ++i) { target[i] = c[i] + (head[i] - c[i]) * 0.5; }
+				// Run 9: halfway landed ~20 units from the face (mouth and chin, nose clipping). Now fCloseUpDistance from the head's
+				// axis along the original view direction, raised fCloseUpRaise so the eyes are in the middle.
+				const double dx = c[0] - p[0], dy = c[1] - p[1];
+				const double len = std::sqrt(dx * dx + dy * dy);
+				const double dist = std::clamp(static_cast<double>(settings::closeUpDistance), 20.0, 200.0);
+				if (len < 1.0)
+				{
+					logger::warn("close-up: the camera is on the player's axis; nothing to do");
+					return;
+				}
+				target[0] = p[0] + dx / len * dist;
+				target[1] = p[1] + dy / len * dist;
+				target[2] = c[2] + settings::closeUpRaise;
 			}
 			else { std::copy(std::begin(g_savedCam), std::end(g_savedCam), std::begin(target)); }
 			RE::GFxValue arg;
