@@ -17,11 +17,13 @@ with 0 changed afterwards, description panel, player dressed in RaceMenu.
 
 ## B. Camera data (send the JSON; nothing to judge)
 
-3. `op=members path=CharGen` - RaceMenu's Scaleform object.
+3. `op=members path=CharGen` - RaceMenu's Scaleform object. EXPECTED: ok=true and about 44 function members.
 4. `op=call path=CharGen.GetRaceSexCameraPos`, `CharGen.GetRaceSexCameraRot`, `CharGen.GetMeshCameraRadius`,
-   `CharGen.GetPlayerPosition`, `CharGen.GetPlayerRotation`.
+   `CharGen.GetPlayerPosition`, `CharGen.GetPlayerRotation`. EXPECTED: ok=true for each (no "not reachable"); the result
+   shape (number / object members) is the data wanted.
 5. `op=members path=_root.RaceSexMenuBaseInstance.RaceSexPanelsInstance._zoomControl` and
-   `..._lightControl`, and `op=members path=_root.RaceSexMenuBaseInstance.RaceSexPanelsInstance.cameraEditor`.
+   `..._lightControl`, and `op=members path=_root.RaceSexMenuBaseInstance.RaceSexPanelsInstance.cameraEditor`. EXPECTED:
+   ok=true with their members listed.
 
 ## C. Still untested inputs (what you can drive)
 
