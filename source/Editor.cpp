@@ -1,4 +1,4 @@
-﻿#include "PCH.h"
+#include "PCH.h"
 
 #include "Editor.h"
 
@@ -47,6 +47,8 @@ namespace editor
 		std::atomic<int> g_category{ 0 };       // rail index
 		std::atomic<bool> g_finishRequested{ false };
 		std::atomic<bool> g_showWhenConsoleCloses{ false };
+		std::atomic<bool> g_showWhenBoxCloses{ false };
+		std::atomic<bool> g_finishing{ false };   // ConfirmDone sent: the game's own finish / name boxes own the input
 		std::atomic<int> g_toolAnswer{ 0 };      // 1 confirm, 2 cancel: DevBench's answer to the open question
 		std::atomic<bool> g_questionOpen{ false };
 		std::string g_questionId;               // guarded by g_whyLock
@@ -155,7 +157,7 @@ namespace editor
 				"igOpenPopup_Str", "igBeginPopupModal", "igEndPopup", "igCloseCurrentPopup", "igSetItemDefaultFocus",
 				"igInputTextWithHint", "igBeginDisabled", "igEndDisabled", "igGetContentRegionAvail", "igBeginTable", "igTableNextColumn",
 				"igEndTable", "igIsWindowAppearing",
-				"igSliderFloat", "igIsKeyDown_Nil", "igIsMouseDown_Nil",
+				"igSliderFloat", "igIsKeyDown_Nil", "igIsMouseDown_Nil", "igIsMouseClicked_Bool",
 				"igGetCursorScreenPos", "igGetWindowDrawList", "igGetFrameHeight", "igInvisibleButton", "igPushID_Str", "igPopID",
 				"ImDrawList_AddRectFilled", "ImDrawList_AddCircleFilled"
 			};
@@ -288,6 +290,23 @@ namespace editor
 				else if (sliders) { rail.push_back({ RailItem::Kind::kSliders, c.label, c.flag }); }
 				else { continue; }   // a category with nothing in it for this character
 				covered.insert(c.flag);
+			}
+			// Other mods' choice categories (Apprentice's Class and Trait) come right after Race (the owner, 2026-11-06 20:58).
+			{
+				std::vector<RailItem> ordered;
+				std::vector<RailItem> choices;
+				for (const auto& r : rail)
+				{
+					if (r.kind == RailItem::Kind::kChoices) { choices.push_back(r); }
+				}
+				for (const auto& r : rail)
+				{
+					if (r.kind == RailItem::Kind::kChoices) { continue; }
+					ordered.push_back(r);
+					if (r.kind == RailItem::Kind::kRace) { ordered.insert(ordered.end(), choices.begin(), choices.end()); choices.clear(); }
+				}
+				ordered.insert(ordered.end(), choices.begin(), choices.end());
+				rail.swap(ordered);
 			}
 			std::set<std::uint32_t> orphans;
 			for (const auto& r : m.races)
@@ -445,10 +464,20 @@ namespace editor
 		void DoFinish()
 		{
 			logger::info("Done confirmed");
-			if (!bridge::Finish())
+			if (bridge::Finish())
+			{
+				// The game now asks its own questions ("Finish and name your character?", the name box): the editor hides and gives
+				// RaceMenu's panels back so those get the keys (test run 4: the game's box was stuck under the editor). Cancelled,
+				// the switch key brings the editor back.
+				g_finishing = true;
+				SetShown(false, "Done: the game's own finish");
+				return;
+			}
+			{
 			{
 				g_message = NTR("RMM_NoDone", "Finish from RaceMenu's own interface: switched to it.");
 				SetShown(false, "Done without a known Done function");
+			}
 			}
 		}
 
@@ -753,6 +782,22 @@ namespace editor
 			const float displayH = io ? io->DisplaySize.y : 1080.0F;
 			const float width = std::clamp(settings::panelWidth, 0.2F, 0.5F) * displayW;
 			EditorWindow(snap, width, displayH);
+
+			// Mouse drag on the character (the owner, 2026-11-06 20:59): a left press on the open space outside every editor
+			// window starts a drag; while held, the character turns by the horizontal movement times fTurnSpeed (degrees per
+			// pixel). Mirrorwright's own rotation (Actor::SetHeading); while the editor is up it holds the input, so RaceMenu's
+			// or another mod's rotation does not see the same drag.
+			{
+				static bool dragging = false;
+				const bool down = ImGuiMCP::IsMouseDown(ImGuiMCP::ImGuiMouseButton_Left);
+				if (!down) { dragging = false; }
+				else if (!dragging && ImGuiMCP::IsMouseClicked(ImGuiMCP::ImGuiMouseButton_Left, false) && io && !io->WantCaptureMouse)
+				{
+					dragging = true;
+					logger::debug("drag-turn started at x={:.0f}", io->MousePos.x);
+				}
+				if (dragging && io && io->MouseDelta.x != 0.0F) { bridge::TurnBy(io->MouseDelta.x * settings::turnSpeed); }
+			}
 			if (settings::scenePanel)
 			{
 				const float sceneW = displayW * 0.20F;
@@ -909,7 +954,23 @@ namespace editor
 	void OnRaceMenuClosed()
 	{
 		g_showWhenConsoleCloses = false;
+		g_showWhenBoxCloses = false;
+		g_finishing = false;
 		SetShown(false, "RaceMenu closed");
+	}
+
+	void OnGameBox(bool a_opening)
+	{
+		if (a_opening)
+		{
+			if (IsShown())
+			{
+				g_showWhenBoxCloses = !g_finishing;
+				SetShown(false, "a game message box opened");
+			}
+			return;
+		}
+		if (g_showWhenBoxCloses.exchange(false) && !g_finishing) { SetShown(true, "the game message box closed"); }
 	}
 
 	void OnConsoleClosed()
@@ -946,6 +1007,7 @@ namespace editor
 		}
 		g_lastSwitchMs = now;
 		++g_switchCount;
+		g_finishing = false;   // the switch key after a cancelled finish brings the editor back
 		SetShown(!IsShown(), a_source);
 	}
 

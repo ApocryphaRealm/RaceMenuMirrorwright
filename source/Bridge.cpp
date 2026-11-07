@@ -245,9 +245,12 @@ namespace bridge
 		{
 			// RaceMenu's labels can be translation keys ("$HEAD"); the translated text lives in RaceMenu's BSA, which cannot be
 			// read here. Show the key without its '$', and an all-capitals key in title case ("$HEAD" -> "Head").
-			if (!a_label.empty() && a_label.front() == '$')
+			if (!a_label.empty() && a_label.front() == '$') { a_label.erase(0, 1); }
+			// Apprentice's category keys (test run 4: "Apptrait" showed raw).
+			if (_stricmp(a_label.c_str(), "APPTRAIT") == 0) { return "Trait"; }
+			if (_stricmp(a_label.c_str(), "APPCLASS") == 0) { return "Class"; }
+			if (a_label.size() > 1)
 			{
-				a_label.erase(0, 1);
 				const bool caps = std::none_of(a_label.begin(), a_label.end(), [](char c) { return c >= 'a' && c <= 'z'; });
 				if (caps)
 				{
@@ -597,6 +600,7 @@ namespace bridge
 			RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* a_event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override
 			{
 				if (a_event && !a_event->opening && a_event->menuName == RE::Console::MENU_NAME && g_menuOpen) { editor::OnConsoleClosed(); }
+				if (a_event && g_menuOpen && a_event->menuName == RE::MessageBoxMenu::MENU_NAME) { editor::OnGameBox(a_event->opening); }
 				if (!a_event || a_event->menuName != RE::RaceSexMenu::MENU_NAME) { return RE::BSEventNotifyControl::kContinue; }
 				if (a_event->opening)
 				{
@@ -742,7 +746,32 @@ namespace bridge
 				logger::warn("choose: {}[{}] not reachable", path, a_index);
 				return;
 			}
-			// onItemPress on the nearest owner: the list's clip, its parent, or the documented panels clip.
+			// A real race: the game's own ChangeRace handler, through the movie's GameDelegate, with the entry's raceID - the call
+			// the race list makes (test run 4: onItemPress with the unfiltered index changed nothing). Another mod's choice
+			// (Apprentice) must never reach ChangeRace (past mistake 2026-10-04): it goes to onItemPress below.
+			RE::GFxValue raceID, flagV;
+			const bool hasRace = element.GetMember("raceID", &raceID) && raceID.IsNumber();
+			const bool raceFlag = element.GetMember("filterFlag", &flagV) && flagV.IsNumber() && (static_cast<std::uint32_t>(flagV.GetNumber()) & kCategoryRace) != 0;
+			if (hasRace && raceFlag)
+			{
+				RE::GFxValue delegate;
+				if (movie->GetVariable(&delegate, "_global.gfx.io.GameDelegate") && delegate.IsObject())
+				{
+					RE::GFxValue args[2];
+					movie->CreateString(&args[0], "ChangeRace");
+					movie->CreateArray(&args[1]);
+					args[1].PushBack(raceID);
+					delegate.Invoke("call", nullptr, args, 2);
+					logger::info("choose: {}[{}] race through GameDelegate.call(\"ChangeRace\", [{}])", path, a_index, raceID.GetNumber());
+					ReprobeSoon(800);
+					return;
+				}
+				logger::warn("choose: the movie has no GameDelegate; trying onItemPress");
+			}
+			// onItemPress on the nearest owner: the list's clip, its parent, or the documented panels clip. The index it takes
+			// is the entry's own itemIndex when it has one (the unfiltered position otherwise).
+			RE::GFxValue itemIndex;
+			const double pressIndex = element.GetMember("itemIndex", &itemIndex) && itemIndex.IsNumber() ? itemIndex.GetNumber() : static_cast<double>(a_index);
 			std::vector<std::string> owners;
 			std::string p = path;
 			for (int up = 0; up < 3; ++up)
@@ -760,7 +789,7 @@ namespace bridge
 				if (!clip.GetMember("onItemPress", &fn) || !fn.IsObject()) { continue; }
 				RE::GFxValue arg;
 				movie->CreateObject(&arg);
-				arg.SetMember("index", RE::GFxValue(static_cast<double>(a_index)));
+				arg.SetMember("index", RE::GFxValue(pressIndex));
 				arg.SetMember("entry", element);
 				clip.Invoke("onItemPress", nullptr, &arg, 1);
 				logger::info("choose: {}[{}] through {}.onItemPress", path, a_index, owner);

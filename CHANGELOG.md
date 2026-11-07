@@ -25,4 +25,8 @@ Written as changes happen, not reconstructed afterwards (rule 61). Each version 
 - The INI key for passing sliders to the game is now bGameSliderCalls (default 1): an installed INI from the first build kept bEngineSliderCalls = 0, which switched the sliders off.
 - The confirmation boxes (Done, Reset, Load, replace, delete) answer Enter, Space and the pad's A, and Esc and the pad's B, read by the box itself; the press that opened a box never answers it.
 - DevBench: slider changes go through the editor's own path, so they can be undone; op=confirm / op=cancel answer the open question; op=choose name=<race>.
+- After Done, the editor steps aside so the game's own "Finish and name your character?" box and the name entry get the keys; the editor also hides while any game message box is up during RaceMenu and comes back when it closes. F4 brings it back after a cancelled finish.
+- A race is changed through the game's own ChangeRace call with the race's ID (onItemPress with the list position changed nothing); other mods' choices still go through onItemPress, with the entry's own itemIndex.
+- Apprentice's Class and Trait categories sit directly after Race in the rail, labelled Class and Trait; any all-capitals category name shows in title case.
+- Turning by dragging the mouse on the open space over the character, beside the stick, Q / E and the Turn buttons - all the editor's own rotation.
 - Renamed RaceMenu Mirrorwright (working name Likeness): DLL, INI, log and translation files are RaceMenuMirrorwright.*, the DevBench tool is mirrorwright.control.
