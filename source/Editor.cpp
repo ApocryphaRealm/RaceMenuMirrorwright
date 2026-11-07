@@ -191,7 +191,7 @@ namespace editor
 			inline constexpr unsigned kRace = 0xf0c0, kBody = 0xf183, kHead = 0xf007, kFace = 0xf118, kEyes = 0xf06e, kBrow = 0xf11a, kMouth = 0xf580,
 									  kHair = 0xf0c4, kExtra = 0xf1de, kPaint = 0xf1fc, kOther = 0xf192, kChoices = 0xf03a, kDiscovery = 0xf188,
 									  kUndo = 0xf0e2, kRedo = 0xf01e, kReset = 0xf2ea, kDone = 0xf00c, kLoad = 0xf07c, kSave = 0xf0c7, kDelete = 0xf1f8,
-									  kRefresh = 0xf021, kLight = 0xf0eb, kSearch = 0xf002, kSwitch = 0xf362, kTurnLeft = 0xf2ea, kTurnRight = 0xf2f9;
+									  kRefresh = 0xf021, kLight = 0xf0eb, kSearch = 0xf002, kSwitch = 0xf362, kTurnLeft = 0xf2ea, kTurnRight = 0xf2f9, kCloseUp = 0xf00e;
 		}
 
 		const std::string& Glyph(unsigned a_cp)
@@ -615,6 +615,7 @@ namespace editor
 					if (ImGuiMCP::IsKeyDown(ImGuiMCP::ImGuiKey_GamepadRStickRight)) { turn += 2.5F; }
 					if (turn != 0.0F) { bridge::TurnBy(turn * settings::turnSpeed / 0.35F); }
 					if (ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_L, false)) { bridge::ToggleLight(); }
+					if (ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_Z, false) || ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_GamepadR3, false)) { bridge::ToggleCloseUp(); }
 					if (ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_R, false) || ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_GamepadFaceLeft, false)) { g_finishRequested = true; }
 				}
 
@@ -784,6 +785,8 @@ namespace editor
 					// RaceMenu's documented RSM_ToggleLight event (RaceMenu.psc OnToggleLight).
 					bridge::ToggleLight();
 				}
+				ImGuiMCP::SameLine();
+				if (IconButton(fa::kCloseUp, NTR("RMM_CloseUp", "Close-up"))) { bridge::ToggleCloseUp(); }
 				ImGuiMCP::SameLine();
 				if (IconButton(fa::kTurnLeft, NTR("RMM_TurnLeft", "Turn left"))) { bridge::TurnBy(-15.0F); }
 				ImGuiMCP::SameLine();

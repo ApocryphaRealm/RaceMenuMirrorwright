@@ -445,6 +445,39 @@ namespace bridge
 			return m;
 		}
 
+		// Swatch colours from the character itself (run 8: the row's fillColor showed near-black for red-orange hair - it is the
+		// row's default, not the current colour). Hair colour rows: the player's hair colour form; tint rows: the player's tint
+		// mask of the row's tintType. A row with neither keeps its fillColor.
+		void LiveColours(Model& a_m)
+		{
+			auto* player = RE::PlayerCharacter::GetSingleton();
+			if (!player) { return; }
+			const auto* npc = player->GetActorBase();
+			auto* tints = &player->GetPlayerRuntimeData().tintMasks;   // GetTintList is not implemented in the SE line's CommonLib
+			for (auto& s : a_m.sliders)
+			{
+				if (!s.colour) { continue; }
+				if (s.callback == "ChangeHairColorPreset")
+				{
+					if (npc && npc->headRelatedData && npc->headRelatedData->hairColor)
+					{
+						const auto& c = npc->headRelatedData->hairColor->color;
+						s.fill = (static_cast<std::uint32_t>(c.red) << 16) | (static_cast<std::uint32_t>(c.green) << 8) | c.blue;
+					}
+					continue;
+				}
+				if (s.tintType < 0 || !tints) { continue; }
+				for (const auto* tm : *tints)
+				{
+					if (tm && static_cast<int>(tm->type.underlying()) == s.tintType)
+					{
+						s.fill = (static_cast<std::uint32_t>(tm->color.red) << 16) | (static_cast<std::uint32_t>(tm->color.green) << 8) | tm->color.blue;
+						break;
+					}
+				}
+			}
+		}
+
 		void LogModel(const Snapshot& a_s)
 		{
 			const auto& m = a_s.model;
@@ -498,6 +531,7 @@ namespace bridge
 			auto panelFns = FunctionsOf(movie, kMenuRoot);
 			functions.insert(functions.end(), panelFns.begin(), panelFns.end());
 			Model model = BuildModel(walker.lists, DelegateCallbacks(menu.get()), std::move(functions));
+			LiveColours(model);
 			const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
 
 			std::string status = std::format("{} races, {} sliders, {} categories ({} lists, {} nodes, {} ms{})", model.races.size(), model.sliders.size(),
@@ -660,6 +694,7 @@ namespace bridge
 					}
 				}
 				logger::debug("slider {} ({}) = {:.3f}", s.label, s.callback, value);
+				if (s.colour) { ReprobeSoon(400); }   // the swatch shows the character's live colour (read at the probe)
 			}
 		}
 
@@ -998,6 +1033,68 @@ namespace bridge
 				logger::info("turn: player heading {:.3f} -> {:.3f} rad (Actor::SetHeading; first turn of the session)", before, after);
 			}
 			logger::debug("turn: {:.2f} degrees, heading {:.3f} -> {:.3f}", degrees, before, player->GetAngleZ());
+		});
+	}
+
+	// The face close-up (M3). Run 8: CharGen.GetRaceSexCameraPos returns {x, y, z} (the camera about 40 units from the player,
+	// at head height) and GetPlayerPosition {x, y, z}. The close-up moves the camera along the line to the player's head by
+	// half the distance through CharGen.SetRaceSexCameraPos with the same {x, y, z} shape; toggling again puts the saved
+	// position back. CONFIRM IN THE TEST RUN that SetRaceSexCameraPos takes that object.
+	namespace
+	{
+		bool g_closeUp = false;            // UI thread only
+		std::uint32_t g_closeUpGeneration = 0;   // the menu opening it belongs to; a new opening starts without it
+		double g_savedCam[3] = { 0, 0, 0 };
+	}
+
+	void ToggleCloseUp()
+	{
+		auto* tasks = SKSE::GetTaskInterface();
+		if (!tasks || !g_menuOpen) { return; }
+		tasks->AddUITask([]() {
+			RE::GFxMovieView* movie = Movie();
+			RE::GFxValue chargen;
+			if (!movie || !movie->GetVariable(&chargen, "_global.skse.plugins.CharGen") || !chargen.IsObject())
+			{
+				logger::warn("close-up: skse.plugins.CharGen is not there");
+				return;
+			}
+			auto read = [](const RE::GFxValue& a_obj, double a_out[3]) {
+				RE::GFxValue v;
+				const char* names[] = { "x", "y", "z" };
+				for (int i = 0; i < 3; ++i)
+				{
+					if (!a_obj.GetMember(names[i], &v) || !v.IsNumber()) { return false; }
+					a_out[i] = v.GetNumber();
+				}
+				return true;
+			};
+			RE::GFxValue cam, pos;
+			double c[3], p[3];
+			if (!chargen.Invoke("GetRaceSexCameraPos", &cam) || !cam.IsObject() || !read(cam, c) || !chargen.Invoke("GetPlayerPosition", &pos) ||
+				!pos.IsObject() || !read(pos, p))
+			{
+				logger::warn("close-up: the camera or player position could not be read");
+				return;
+			}
+			if (g_closeUpGeneration != g_generation.load()) { g_closeUp = false; }
+			double target[3];
+			if (!g_closeUp)
+			{
+				std::copy(std::begin(c), std::end(c), std::begin(g_savedCam));
+				const double head[3] = { p[0], p[1], c[2] };   // the camera already sits at head height (run 8)
+				for (int i = 0; i < 3; ++i) { target[i] = c[i] + (head[i] - c[i]) * 0.5; }
+			}
+			else { std::copy(std::begin(g_savedCam), std::end(g_savedCam), std::begin(target)); }
+			RE::GFxValue arg;
+			movie->CreateObject(&arg);
+			arg.SetMember("x", RE::GFxValue(target[0]));
+			arg.SetMember("y", RE::GFxValue(target[1]));
+			arg.SetMember("z", RE::GFxValue(target[2]));
+			chargen.Invoke("SetRaceSexCameraPos", nullptr, &arg, 1);
+			g_closeUp = !g_closeUp;
+			g_closeUpGeneration = g_generation.load();
+			logger::info("close-up {}: camera ({:.0f}, {:.0f}, {:.0f}) -> ({:.0f}, {:.0f}, {:.0f})", g_closeUp ? "on" : "off", c[0], c[1], c[2], target[0], target[1], target[2]);
 		});
 	}
 

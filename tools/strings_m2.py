@@ -55,5 +55,6 @@ T2 = {
 "RMM_GroupColours": ["Colours", "颜色", "Barvy", "Couleurs", "Farben", "Colori", "色", "색상", "Kolory", "Цвета", "Colores"],
 "RMM_GroupPaint": ["Paint", "彩绘", "Malba", "Peinture", "Bemalung", "Pittura", "ペイント", "페인트", "Malunek", "Раскраска", "Pintura"],
 "RMM_GroupMore": ["More", "其他", "Další", "Autres", "Weiteres", "Altro", "その他", "기타", "Więcej", "Прочее", "Más"],
+"RMM_CloseUp": ["Close-up", "特写", "Detail", "Gros plan", "Nahaufnahme", "Primo piano", "アップ", "클로즈업", "Zbliżenie", "Крупный план", "Primer plano"],
 "RMM_RefreshPresets": ["Refresh the list", "刷新列表", "Obnovit seznam", "Actualiser la liste", "Liste aktualisieren", "Aggiorna l'elenco", "リストを更新", "목록 새로 고침", "Odśwież listę", "Обновить список", "Actualizar la lista"],
 }

@@ -126,6 +126,7 @@ namespace bridge
 	void SetSlider(const std::string& a_key, float a_value);         // a_key = Slider::key
 	void TurnBy(float a_degrees);                                    // RaceMenu's CharGen.GetPlayerRotation / SetPlayerRotation
 	void ToggleLight();                                              // RaceMenu's RSM_ToggleLight event
+	void ToggleCloseUp();                                            // face close-up through CharGen.Get/SetRaceSexCameraPos
 	// a_route: "" = the INI's sRaceRoute; "auto" = onItemPress on the panels clip, the race panel, then the list; "changerace" = the game's
 	// ChangeRace with the raceID; or an AS clip path whose onItemPress to call.
 	void ChooseEntry(std::uint32_t a_list, std::uint32_t a_index, const std::string& a_route = {});   // a race or another mod's choice, through onItemPress

@@ -39,4 +39,6 @@ Written as changes happen, not reconstructed afterwards (rule 61). Each version 
 - Group headers in each category, each in its own muted hue: Shape, Parts, Colours, Paint, More (from what each row does; switchable with bGroupHeaders). Colour rows show a swatch of their colour.
 - The race panel adds the live race record's starting Health / Magicka / Stamina, skill bonuses and spells by kind (abilities, powers, lesser powers, shouts, spells).
 - DevBench op=call and op=members accept CharGen.<function> for RaceMenu's Scaleform object.
+- Colour swatches show the character's live colour: the hair colour from the player's hair colour, a tint row from the player's tint of that kind (run 8: the row's own value showed near-black for red-orange hair); they follow a colour change.
+- Face close-up: Z, the pad's R3, the Close-up button or DevBench op=closeup move RaceMenu's camera halfway to the face and back (CharGen camera position).
 - Renamed RaceMenu Mirrorwright (working name Likeness): DLL, INI, log and translation files are RaceMenuMirrorwright.*, the DevBench tool is mirrorwright.control.
