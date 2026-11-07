@@ -6,6 +6,7 @@
 #include "utils/Logger.h"
 
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <format>
 #include <future>
@@ -32,6 +33,33 @@ namespace wardrobe
 		{
 			if (auto* tasks = SKSE::GetTaskInterface()) { tasks->AddTask(std::move(a_fn)); }
 			else { logger::error("wardrobe: no task interface"); }
+		}
+
+		// TNG is never touched (the owner's rule; run 18 took off "TNG GenitalCover"). A file from The New Gentleman or its
+		// patches: its name holds "TheNewGentleman" or starts with "TNG".
+		bool IsTngFile(const RE::TESFile* a_file)
+		{
+			if (!a_file) { return false; }
+			std::string name(a_file->GetFilename());
+			for (char& c : name) { c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); }
+			return name.find("thenewgentleman") != std::string::npos || name.starts_with("tng");
+		}
+
+		// Why an armour must stay on, or nullptr when it may come off.
+		// Only body clothing / armour on slots 30-61, never slot 52 (TNG's genital slot by default), never anything of TNG's
+		// (its file, or a keyword from its file).
+		const char* KeepReason(const RE::TESObjectARMO* a_armor)
+		{
+			if (!a_armor) { return "not an armour"; }
+			if (IsTngFile(a_armor->GetFile(0))) { return "from The New Gentleman's plugins"; }
+			for (const auto* kw : a_armor->GetKeywords())
+			{
+				if (kw && IsTngFile(kw->GetFile(0))) { return "carries a keyword of The New Gentleman"; }
+			}
+			const auto mask = static_cast<std::uint32_t>(a_armor->bipedModelData.bipedObjectSlots.underlying());   // both CommonLib lines
+			if (mask == 0) { return "no body slot"; }
+			if (mask & (1u << (52 - 30))) { return "uses slot 52 (TNG's genital slot)"; }
+			return nullptr;   // slots 30-61 are the 32 bits of the mask, so any other slot is a body slot
 		}
 
 		// Whether a_list still belongs to the inventory entry of a_obj (it is passed back to the game only then).
@@ -76,6 +104,11 @@ namespace wardrobe
 				for (auto* xl : *entry->extraLists)
 				{
 					if (!xl || !(xl->HasType(RE::ExtraDataType::kWorn) || xl->HasType(RE::ExtraDataType::kWornLeft))) { continue; }
+					if (const char* why = KeepReason(obj->As<RE::TESObjectARMO>()))
+					{
+						logger::info("undress: kept {} ({:08X}): {}", obj->GetName() ? obj->GetName() : "", obj->GetFormID(), why);
+						continue;
+					}
 					removed.push_back({ obj->GetFormID(), xl, obj->GetName() ? obj->GetName() : "" });
 				}
 			}
@@ -92,6 +125,9 @@ namespace wardrobe
 				g_undressed = true;
 				logger::info("undress: {} item(s) off; they go back on with Dress, Done, closing the menu or a load", g_removed.size());
 			}
+			// Run 18: the RaceSex Menu does not rebuild the player's model after a quiet unequip - ask for it.
+			player->Update3DModel();
+			logger::debug("undress: 3D model update requested");
 		});
 	}
 
@@ -125,6 +161,7 @@ namespace wardrobe
 				equip->EquipObject(player, obj, xl, 1, nullptr, false, false, false, true);
 				logger::info("dress ({}): put on {} ({:08X}){}", why, w.name, w.form, xl ? "" : " - its own instance was gone, another copy used");
 			}
+			player->Update3DModel();
 		});
 	}
 
