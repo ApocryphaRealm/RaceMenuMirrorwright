@@ -15,12 +15,12 @@ SKSE64, Address Library for SKSE Plugins, RaceMenu, and Apocrypha Menu Framework
 
 ## Settings
 
-`SKSE\Plugins\Likeness.ini`; most also on the framework's Likeness > Settings page.
+`SKSE\Plugins\RaceMenuMirrorwright.ini`; most also on the framework's RaceMenu Mirrorwright > Settings page.
 
 ## Testing hooks
 
 DevBench tool `mirrorwright.control` (ops: state, probe, list, plugins, model, slider, choose, category, done, presets, show, hide, switch, reload). Log:
-`Documents\My Games\Skyrim Special Edition\SKSE\Likeness.log`.
+`Documents\My Games\Skyrim Special Edition\SKSE\RaceMenuMirrorwright.log`.
 
 ## Building
 
