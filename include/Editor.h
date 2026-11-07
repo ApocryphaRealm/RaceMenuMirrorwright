@@ -26,7 +26,8 @@ namespace editor
 	void SelectCategory(int a_index);
 	void SelectCategoryByName(const std::string& a_name);   // applied at the next frame
 	void OnConsoleClosed();
-	void OnGameBox(bool a_opening);   // a game MessageBoxMenu opened / closed while RaceMenu is open
+	void OnGameBox(bool a_opening);
+	void OnPadZoom(const char* a_source);   // the pad's R3, from the game's input or the editor's own read   // a game MessageBoxMenu opened / closed while RaceMenu is open
 	// DevBench: a slider change through the editor's own path (so it can be undone), and an answer to the open question.
 	void ToolSlider(const std::string& a_key, float a_value);
 	void ToolAnswer(bool a_yes);

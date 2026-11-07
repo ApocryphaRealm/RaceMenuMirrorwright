@@ -49,4 +49,6 @@ Written as changes happen, not reconstructed afterwards (rule 61). Each version 
 - Rows stay inside their parent (the owner's rule): the top bar, the footer, the scene panel, the preset buttons and the settings buttons measure each item and wrap to the next line when it does not fit; a label too long for a whole line is shortened with "..." and shown in full in a tooltip.
 - Zoom: Z, R3, the button and op=closeup press the game's own zoom (the menu's input handler with the zoom control's key) instead of moving the camera; the button reads "Zoom out" or "Close-up" by state. fCloseUpDistance and fCloseUpRaise are gone (runs 9-11: the computed camera clipped into the head).
 - Swatches: the hair colour is shown doubled (the hair shader brightens it; raw and shown values logged); an unused tint shows a dim grey square instead of white.
+- The pad's R3 zooms through the game's own input event as well as the editor's own read (one zoom per press); every pad button the editor sees is logged at debug level.
+- Hair Color's swatch shows the row's own colour, as RaceMenu's list does (the hair colour form's tint is not the colour the hair renders).
 - Renamed RaceMenu Mirrorwright (working name Likeness): DLL, INI, log and translation files are RaceMenuMirrorwright.*, the DevBench tool is mirrorwright.control.

@@ -472,17 +472,11 @@ namespace bridge
 				if (!s.colour) { continue; }
 				if (s.callback == "ChangeHairColorPreset")
 				{
-					if (npc && npc->headRelatedData && npc->headRelatedData->hairColor)
-					{
-						// Run 11: the form's colour read dark olive for light blond hair; the hair shader brightens it about 2x (a
-						// hypothesis), so the swatch shows it doubled and clamped. Raw and shown are both logged.
-						const auto& c = npc->headRelatedData->hairColor->color;
-						auto twice = [](std::uint8_t v) { return static_cast<std::uint32_t>(std::min(255, v * 2)); };
-						const std::uint32_t raw = (static_cast<std::uint32_t>(c.red) << 16) | (static_cast<std::uint32_t>(c.green) << 8) | c.blue;
-						s.fill = (twice(c.red) << 16) | (twice(c.green) << 8) | twice(c.blue);
-						logger::info("swatch {}: hair colour form {:08X} raw #{:06X} shown #{:06X}", s.label, npc->headRelatedData->hairColor->GetFormID(), raw, s.fill);
-					}
-					else { logger::info("swatch {}: no hair colour form on the player; the row's own colour #{:06X} stays", s.label, s.fill); }
+					// Run 12: the hair colour form's tint (#383B2C) is not what the player sees - the gold comes from the hair texture
+					// - and RaceMenu's own list draws the row's own colour. So the swatch shows the row's colour, as RaceMenu does.
+					const auto* form = npc && npc->headRelatedData ? npc->headRelatedData->hairColor : nullptr;
+					logger::info("swatch {}: the row's own colour #{:06X} (as RaceMenu's list shows it); hair colour form {:08X}", s.label, s.fill,
+						form ? form->GetFormID() : 0u);
 					continue;
 				}
 				if (s.tintType < 0 || !tints) { continue; }
@@ -770,9 +764,22 @@ namespace bridge
 		public:
 			RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* a_events, RE::BSTEventSource<RE::InputEvent*>*) override
 			{
-				if (!a_events || !g_menuOpen || settings::switchKey == 0 || editor::IsShown()) { return RE::BSEventNotifyControl::kContinue; }
+				if (!a_events || !g_menuOpen) { return RE::BSEventNotifyControl::kContinue; }
 				for (auto* e = *a_events; e; e = e->next)
 				{
+					// Run 12: R3 (XInput right thumb, 0x0080) gave no zoom through the editor's own ImGui read. The game's event is
+					// read here too - while the editor is up as well - and every pad button that arrives is logged at debug.
+					if (e->GetEventType() == RE::INPUT_EVENT_TYPE::kButton && e->GetDevice() == RE::INPUT_DEVICE::kGamepad)
+					{
+						const auto* pad = e->AsButtonEvent();
+						if (pad)
+						{
+							logger::debug("pad button 0x{:04X} value {:.2f} held {:.2f} (editor {})", pad->GetIDCode(), pad->Value(), pad->HeldDuration(), editor::IsShown() ? "shown" : "hidden");
+							if (pad->IsDown() && pad->GetIDCode() == 0x0080 && editor::IsShown()) { editor::OnPadZoom("game input"); }
+						}
+						continue;
+					}
+					if (settings::switchKey == 0 || editor::IsShown()) { continue; }
 					if (e->GetEventType() != RE::INPUT_EVENT_TYPE::kButton || e->GetDevice() != RE::INPUT_DEVICE::kKeyboard) { continue; }
 					const auto* button = e->AsButtonEvent();
 					if (!button || !button->IsDown() || button->GetIDCode() != settings::switchKey) { continue; }

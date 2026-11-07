@@ -706,7 +706,8 @@ namespace editor
 					if (ImGuiMCP::IsKeyDown(ImGuiMCP::ImGuiKey_GamepadRStickRight)) { turn += 2.5F; }
 					if (turn != 0.0F) { bridge::TurnBy(turn * settings::turnSpeed / 0.35F); }
 					if (ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_L, false)) { bridge::ToggleLight(); }
-					if (ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_Z, false) || ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_GamepadR3, false)) { bridge::ToggleCloseUp(); }
+					if (ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_Z, false)) { bridge::ToggleCloseUp(); }
+					if (ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_GamepadR3, false)) { OnPadZoom("editor window (ImGui R3)"); }
 					if (ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_R, false) || ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_GamepadFaceLeft, false)) { g_finishRequested = true; }
 				}
 
@@ -1205,6 +1206,21 @@ namespace editor
 	}
 
 	void ToolAnswer(bool a_yes) { g_toolAnswer = a_yes ? 1 : 2; }
+
+	// R3 can reach the editor twice (the game's event and the framework's ImGui pad); one zoom per press.
+	void OnPadZoom(const char* a_source)
+	{
+		static std::atomic<std::int64_t> last{ 0 };
+		const auto now = NowMs();
+		if (now - last.load() < 250)
+		{
+			logger::debug("R3 from {} ignored (within 250 ms of the last)", a_source);
+			return;
+		}
+		last = now;
+		logger::info("zoom from R3 ({})", a_source);
+		bridge::ToggleCloseUp();
+	}
 
 	void NoteChosen(const std::string& a_label, const std::string& a_description, bool a_race)
 	{
