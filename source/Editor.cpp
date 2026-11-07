@@ -156,7 +156,7 @@ namespace editor
 				"igIsKeyPressed_Bool", "igIsItemHovered", "igSetTooltipV", "igPushItemWidth", "igPopItemWidth",
 				"igOpenPopup_Str", "igBeginPopupModal", "igEndPopup", "igCloseCurrentPopup", "igSetItemDefaultFocus",
 				"igInputTextWithHint", "igBeginDisabled", "igEndDisabled", "igGetContentRegionAvail", "igBeginTable", "igTableNextColumn",
-				"igEndTable", "igIsWindowAppearing",
+				"igEndTable", "igIsWindowAppearing", "igPushStyleColor_Vec4", "igPopStyleColor", "igPushStyleVar_Float", "igPopStyleVar",
 				"igSliderFloat", "igIsKeyDown_Nil", "igIsMouseDown_Nil", "igIsMouseClicked_Bool",
 				"igGetCursorScreenPos", "igGetWindowDrawList", "igGetFrameHeight", "igInvisibleButton", "igPushID_Str", "igPopID",
 				"ImDrawList_AddRectFilled", "ImDrawList_AddCircleFilled"
@@ -422,41 +422,87 @@ namespace editor
 		}
 
 		// ---- confirmations ------------------------------------------------------------------------------------------------
+		// One choice of a confirmation box, drawn as its own filled box: grey with light text, or white with dark text when it has
+		// the focus (the owner, 2026-11-06 21:00 and 21:01). Returns true when clicked; hovering focuses it.
+		bool Choice(const char* a_label, bool a_focused, bool& a_hovered)
+		{
+			using namespace ImGuiMCP;
+			const ImVec4 white(1.0F, 1.0F, 1.0F, 1.0F);
+			const ImVec4 dark(0.05F, 0.05F, 0.05F, 1.0F);
+			const ImVec4 grey(0.22F, 0.22F, 0.22F, 1.0F);   // the owner, 21:01: a filled box, never an outline
+			const ImVec4 light(0.9F, 0.9F, 0.9F, 1.0F);
+			PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0F);
+			PushStyleColor(ImGuiCol_Border, grey);
+			PushStyleColor(ImGuiCol_Button, a_focused ? white : grey);
+			PushStyleColor(ImGuiCol_ButtonHovered, a_focused ? white : grey);
+			PushStyleColor(ImGuiCol_ButtonActive, white);
+			PushStyleColor(ImGuiCol_Text, a_focused ? dark : light);
+			const float w = std::max(120.0F, GetFrameHeight() * 5.0F);
+			const bool clicked = Button(a_label, ImVec2(w, GetFrameHeight() * 1.4F));
+			a_hovered = IsItemHovered();
+			PopStyleColor(5);
+			PopStyleVar(1);
+			return clicked;
+		}
+
+		// A confirmation box: the confirming choice and Cancel. Focus starts on the confirming choice; Left / Right, the D-pad
+		// and Tab move it, the mouse focuses what it hovers; Enter / Space / A take the focused choice; Esc / B cancel. The box
+		// reads its own keys (test run 3: the focused-button route did not answer). DevBench answers with op=confirm / cancel.
 		bool Confirm(const char* a_id, const char* a_text, const char* a_yes)
 		{
+			static std::unordered_map<std::string, int> focus;   // per box: 0 = the confirming choice, 1 = Cancel
 			bool yes = false;
 			if (ImGuiMCP::BeginPopupModal(a_id, nullptr, ImGuiMCP::ImGuiWindowFlags_AlwaysAutoResize))
 			{
+				using namespace ImGuiMCP;
 				g_questionOpen = true;
 				{
 					std::scoped_lock guard(g_whyLock);
 					g_questionId = a_id;
 				}
-				ImGuiMCP::TextUnformatted(a_text);
-				ImGuiMCP::Spacing();
-				// The press that opened the box (R, X, the button) must not answer it: keys count from the second frame.
-				const bool appearing = ImGuiMCP::IsWindowAppearing();
-				using namespace ImGuiMCP;
-				const bool keyYes = !appearing && (IsKeyPressed(ImGuiKey_Enter, false) || IsKeyPressed(ImGuiKey_KeypadEnter, false) ||
-													  IsKeyPressed(ImGuiKey_Space, false) || IsKeyPressed(ImGuiKey_GamepadFaceDown, false));
+				const bool appearing = IsWindowAppearing();
+				int& f = focus[a_id];
+				if (appearing) { f = 0; }
+				TextUnformatted(a_text);
+				Spacing();
+
+				if (!appearing)
+				{
+					if (IsKeyPressed(ImGuiKey_LeftArrow, false) || IsKeyPressed(ImGuiKey_GamepadDpadLeft, false)) { f = 0; }
+					if (IsKeyPressed(ImGuiKey_RightArrow, false) || IsKeyPressed(ImGuiKey_GamepadDpadRight, false)) { f = 1; }
+					if (IsKeyPressed(ImGuiKey_Tab, false)) { f = 1 - f; }
+				}
+				const bool keyTake = !appearing && (IsKeyPressed(ImGuiKey_Enter, false) || IsKeyPressed(ImGuiKey_KeypadEnter, false) ||
+													   IsKeyPressed(ImGuiKey_Space, false) || IsKeyPressed(ImGuiKey_GamepadFaceDown, false));
 				const bool keyNo = !appearing && (IsKeyPressed(ImGuiKey_Escape, false) || IsKeyPressed(ImGuiKey_GamepadFaceRight, false));
 				const int tool = g_toolAnswer.exchange(0);
-				if (ImGuiMCP::Button(a_yes) || keyYes || tool == 1)
+
+				bool hoverYes = false, hoverNo = false;
+				const bool clickYes = Choice((std::string(a_yes) + "##yes").c_str(), f == 0, hoverYes);
+				SameLine();
+				const bool clickNo = Choice((std::string(NTR("RMM_Cancel", "Cancel")) + "##no").c_str(), f == 1, hoverNo);
+				if (hoverYes) { f = 0; }
+				if (hoverNo) { f = 1; }
+
+				const char* how = nullptr;
+				int answer = 0;   // 1 yes, 2 no
+				if (tool) { answer = tool; how = "devbench"; }
+				else if (clickYes) { answer = 1; how = "click"; }
+				else if (clickNo) { answer = 2; how = "click"; }
+				else if (keyNo) { answer = 2; how = "key"; }
+				else if (keyTake) { answer = f == 0 ? 1 : 2; how = "key"; }
+				if (answer == 1)
 				{
 					yes = true;
-					logger::info("question {}: answered yes ({})", a_id, tool == 1 ? "devbench" : keyYes ? "key" : "button");
-					ImGuiMCP::CloseCurrentPopup();
-					g_questionOpen = false;
+					logger::info("question {}: answered yes ({})", a_id, how);
 				}
-				ImGuiMCP::SetItemDefaultFocus();   // from the pad, the confirming button already has the focus (SPEC 8)
-				ImGuiMCP::SameLine();
-				if (!yes && (ImGuiMCP::Button(NTR("RMM_Cancel", "Cancel")) || keyNo || tool == 2))
+				else if (answer == 2) { logger::info("question {}: cancelled ({})", a_id, how); }
+				if (answer)
 				{
-					logger::info("question {}: cancelled ({})", a_id, tool == 2 ? "devbench" : keyNo ? "key" : "button");
-					ImGuiMCP::CloseCurrentPopup();
+					CloseCurrentPopup();
 					g_questionOpen = false;
 				}
-				ImGuiMCP::EndPopup();
+				EndPopup();
 			}
 			return yes;
 		}

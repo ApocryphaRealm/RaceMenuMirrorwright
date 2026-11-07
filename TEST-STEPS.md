@@ -24,4 +24,9 @@ and its patch off, Apprentice on, throwaway save, camera facing the front. Tool 
    normal. Report each stage.
 6. Repeat 5 but press Cancel on the game's box. EXPECTED: back in RaceMenu with its own interface; F4 brings the editor
    back.
-7. No crash. Send the log and screenshots.
+7. Confirmation box look (Reset with a slider changed, or `op=done`): two filled boxes side by side - **Finish** white
+   with dark text (focused), **Cancel** dark grey with light text; no outline-only box. Right arrow / D-pad right / Tab:
+   the white fill moves to Cancel; Left: back. Hover Cancel with the mouse: it turns white. Enter with Cancel focused
+   closes the box without finishing (log `cancelled (key)`); Esc / B always cancel. Screenshot both focus states.
+   Same look on Load, Save-over-existing and Delete in the presets panel.
+8. No crash. Send the log and screenshots.

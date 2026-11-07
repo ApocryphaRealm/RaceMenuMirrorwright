@@ -29,4 +29,5 @@ Written as changes happen, not reconstructed afterwards (rule 61). Each version 
 - A race is changed through the game's own ChangeRace call with the race's ID (onItemPress with the list position changed nothing); other mods' choices still go through onItemPress, with the entry's own itemIndex.
 - Apprentice's Class and Trait categories sit directly after Race in the rail, labelled Class and Trait; any all-capitals category name shows in title case.
 - Turning by dragging the mouse on the open space over the character, beside the stick, Q / E and the Turn buttons - all the editor's own rotation.
+- Every confirmation box (Done, Reset, Load, replace, delete) draws its two choices as filled boxes: grey with light text, the focused one white with dark text. Focus starts on the confirming choice; Left / Right, the D-pad and Tab move it, the mouse focuses what it hovers; Enter / Space / A take the focused choice, Esc / B cancel.
 - Renamed RaceMenu Mirrorwright (working name Likeness): DLL, INI, log and translation files are RaceMenuMirrorwright.*, the DevBench tool is mirrorwright.control.
