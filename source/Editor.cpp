@@ -50,7 +50,8 @@ namespace editor
 		std::atomic<bool> g_finishRequested{ false };
 		std::atomic<bool> g_showWhenConsoleCloses{ false };
 		std::atomic<bool> g_showWhenBoxCloses{ false };
-		std::atomic<bool> g_wantFocus{ true };   // give the editor window the input focus at its next frame (run 14: first R3 lost)
+		std::atomic<bool> g_wantFocus{ true };
+		std::atomic<std::uint32_t> g_focusFrame{ 0 };   // the frame the editor last took the input focus   // give the editor window the input focus at its next frame (run 14: first R3 lost)
 		std::atomic<bool> g_finishing{ false };   // ConfirmDone sent: the game's own finish / name boxes own the input
 		std::atomic<int> g_toolAnswer{ 0 };      // 1 confirm, 2 cancel: DevBench's answer to the open question
 		std::atomic<bool> g_questionOpen{ false };
@@ -427,11 +428,8 @@ namespace editor
 				{
 					if (fn(pad, &state) == ERROR_SUCCESS) { now |= state.buttons; }
 				}
-				if ((now & 0x0080) && !(lastButtons & 0x0080))
-				{
-					logger::debug("R3 down (XInput buttons 0x{:04X})", now);
-					OnPadZoom("XInput poll");
-				}
+				if ((now & 0x0080) != (lastButtons & 0x0080)) { logger::debug("XInput R3 {} (buttons 0x{:04X})", (now & 0x0080) ? "down" : "up", now); }
+				if ((now & 0x0080) && !(lastButtons & 0x0080)) { OnPadZoom("XInput poll"); }
 				lastButtons = now;
 			}
 			// F4 (the switch key) from the OS, while the game window is in front - whoever holds ImGui's focus.
@@ -650,6 +648,12 @@ namespace editor
 			ImGuiMCP::TextWrapped("%s", NTR("RMM_DiscoveryNote", "What {name} read from RaceMenu, for bug reports."));
 			ImGuiMCP::TextDisabled("%s", a_s.status.c_str());
 			if (ImGuiMCP::Button(NTR("RMM_Refresh", "Read RaceMenu again"))) { bridge::RequestProbe(); }
+			if (ImGuiMCP::Button(NTR("RMM_Record", "Record RaceMenu's calls")))
+			{
+				bridge::RequestSpy();
+				g_message = NTR("RMM_Recording", "Recording: switch to RaceMenu's interface and save, load or export there; the calls go to the log.");
+			}
+			if (ImGuiMCP::IsItemHovered()) { ImGuiMCP::SetTooltip("%s", NTR("RMM_HelpRecord", "For bug reports: logs how RaceMenu's own interface calls its preset and export functions.")); }
 			for (int i = 0; i < static_cast<int>(a_s.lists.size()); ++i)
 			{
 				const auto& l = a_s.lists[static_cast<std::size_t>(i)];
@@ -785,7 +789,8 @@ namespace editor
 			if (g_wantFocus.exchange(false))
 			{
 				ImGuiMCP::SetNextWindowFocus();
-				logger::debug("editor window takes the input focus");
+				g_focusFrame = g_framesDrawn.load();
+				logger::debug("editor window takes the input focus (frame {})", g_focusFrame.load());
 			}
 			if (ImGuiMCP::Begin(title.c_str(), nullptr, flags))
 			{
@@ -796,11 +801,25 @@ namespace editor
 				if (ctrl && ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_Z, false)) { Undo(); }
 				if (ctrl && ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_Y, false)) { Redo(); }
 				if (ctrl && ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_F, false)) { g_focusSearch = true; }
-				// Our own edge on the R3 key state (run 15: IsKeyPressed missed the first press after a category change).
-				static bool r3Was = false;
-				const bool r3 = ImGuiMCP::IsKeyDown(ImGuiMCP::ImGuiKey_GamepadR3);
-				if (r3 && !r3Was) { OnPadZoom("editor window (ImGui R3)"); }
-				r3Was = r3;
+				// Our own edge on the R3 key state (run 15: IsKeyPressed missed the first press after a category change), and a
+				// debug line for every pad key edge ImGui shows us, so a lost press can be told from one that never arrived
+				// (run 16: the first R3 after a category change is still lost).
+				{
+					using namespace ImGuiMCP;
+					static bool was[ImGuiKey_GamepadR3 - ImGuiKey_GamepadStart + 1] = {};
+					for (int k = ImGuiKey_GamepadStart; k <= ImGuiKey_GamepadR3; ++k)
+					{
+						const bool down = IsKeyDown(static_cast<ImGuiKey>(k));
+						bool& w = was[k - ImGuiKey_GamepadStart];
+						if (down != w)
+						{
+							logger::debug("ImGui pad key {} {} (frame {}, focus taken {} frames ago)", k, down ? "down" : "up", g_framesDrawn.load(),
+								g_framesDrawn.load() - g_focusFrame.load());
+							if (down && k == ImGuiKey_GamepadR3) { OnPadZoom("editor window (ImGui R3)"); }
+						}
+						w = down;
+					}
+				}
 				const bool typing = io && io->WantTextInput;
 				if (!typing && !ctrl)
 				{
@@ -1372,7 +1391,7 @@ namespace editor
 		const auto now = NowMs();
 		if (now - last.load() < 250)
 		{
-			logger::debug("R3 from {} ignored (within 250 ms of the last)", a_source);
+			logger::debug("R3 edge from {} ignored: within 250 ms of the last zoom (the same press through another route)", a_source);
 			return;
 		}
 		last = now;

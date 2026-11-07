@@ -1314,9 +1314,18 @@ namespace bridge
 		};
 	}
 
-	std::string SpyJson()
+	std::string SpyNow();   // UI thread
+
+	std::string SpyJson() { return OnUI([]() { return SpyNow(); }); }
+
+	void RequestSpy()
 	{
-		return OnUI([]() -> std::string {
+		if (auto* tasks = SKSE::GetTaskInterface(); tasks && g_menuOpen) { tasks->AddUITask([]() { SpyNow(); }); }
+	}
+
+	std::string SpyNow()
+	{
+		{
 			RE::GFxMovieView* movie = Movie();
 			RE::GFxValue chargen;
 			if (!movie || !movie->GetVariable(&chargen, "_global.skse.plugins.CharGen") || !chargen.IsObject())
@@ -1339,7 +1348,7 @@ namespace bridge
 			}
 			logger::info("spy: watching CharGen's preset and export functions ({})", wrapped.empty() ? "already watched" : wrapped);
 			return std::format(R"({{"ok":true,"wrapped":[{}]}})", wrapped);
-		});
+		}
 	}
 
 	std::string Escape(const std::string& a_text)

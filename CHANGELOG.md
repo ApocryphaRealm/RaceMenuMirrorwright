@@ -59,4 +59,6 @@ Written as changes happen, not reconstructed afterwards (rule 61). Each version 
 - The icon-only rail cell is drawn by hand - a square the size of the icon, its highlight behind it, the icon centred.
 - R3 is read as its own edge on the key state every frame, so the first press after a category change counts.
 - DevBench op=call refuses RaceMenu plugin functions other than argument-less getters (a bad call to CharGen.SavePreset crashed the game in run 15); op=spy logs RaceMenu's own calls to its preset and export functions with their arguments.
+- Every pad key edge the editor sees through the framework, and every XInput R3 edge, is logged at debug level with the frame and how many frames since the editor took the focus; an R3 edge that is ignored says why.
+- Discovery > "Record RaceMenu's calls" arms the same recording as DevBench op=spy, for a player sending a bug report.
 - Renamed RaceMenu Mirrorwright (working name Likeness): DLL, INI, log and translation files are RaceMenuMirrorwright.*, the DevBench tool is mirrorwright.control.
