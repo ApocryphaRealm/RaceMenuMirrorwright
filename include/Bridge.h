@@ -134,4 +134,7 @@ namespace bridge
 	std::string PluginsJson();
 	std::string ModelJson(std::size_t a_from, std::size_t a_count);
 	std::string Escape(const std::string& a_text);
+	// DevBench probes for the data only the game has (UI thread, waits up to 5 s).
+	std::string MembersJson(const std::string& a_path);
+	std::string CallJson(const std::string& a_path, const std::vector<std::string>& a_args);
 }

@@ -30,6 +30,7 @@ namespace editor
 	// DevBench: a slider change through the editor's own path (so it can be undone), and an answer to the open question.
 	void ToolSlider(const std::string& a_key, float a_value);
 	void ToolAnswer(bool a_yes);
+	void NoteChosen(const std::string& a_label, const std::string& a_description, bool a_race);   // DevBench choose
 
 	std::string StateJson();
 }

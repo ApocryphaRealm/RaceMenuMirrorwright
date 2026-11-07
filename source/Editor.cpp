@@ -22,6 +22,7 @@
 #include <format>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -53,7 +54,9 @@ namespace editor
 		std::atomic<bool> g_questionOpen{ false };
 		std::string g_questionId;               // guarded by g_whyLock
 		std::mutex g_toolSliderLock;
-		std::vector<std::pair<std::string, float>> g_toolSliders;   // guarded by g_toolSliderLock: DevBench slider changes for the render thread
+		std::vector<std::pair<std::string, float>> g_toolSliders;
+		struct Chosen { std::string label, description; bool race = false; };
+		std::optional<Chosen> g_toolChosen;   // guarded by g_toolSliderLock: a DevBench choice, for the panel and undo   // guarded by g_toolSliderLock: DevBench slider changes for the render thread
 		std::string g_pendingCategory;          // guarded by g_whyLock: a rail entry asked for by name (DevBench)
 		std::atomic<std::uint32_t> g_closeUps{ 0 };
 		std::string g_lastWhy;
@@ -392,6 +395,9 @@ namespace editor
 				if (ImGuiMCP::Button(r.label.c_str(), ImGuiMCP::ImVec2(-1.0F, 0.0F)))
 				{
 					bridge::ChooseEntry(r.list, r.index);
+					if (!r.other) { g_undo.clear(); g_redo.clear(); }
+					g_panelTitle = r.label;
+					g_panelText = r.description;
 					g_message = std::format("{} {}", NTR("RMM_Chose", "Chosen:"), r.label);
 				}
 				if (ImGuiMCP::IsItemHovered() || ImGuiMCP::IsItemFocused())
@@ -822,6 +828,13 @@ namespace editor
 				{
 					std::scoped_lock guard(g_toolSliderLock);
 					pending.swap(g_toolSliders);
+					if (g_toolChosen)
+					{
+						g_panelTitle = g_toolChosen->label;
+						g_panelText = g_toolChosen->description;
+						if (g_toolChosen->race) { g_undo.clear(); g_redo.clear(); }
+						g_toolChosen.reset();
+					}
 				}
 				for (const auto& [key, value] : pending)
 				{
@@ -840,6 +853,7 @@ namespace editor
 			const float displayW = io ? io->DisplaySize.x : 1920.0F;
 			const float displayH = io ? io->DisplaySize.y : 1080.0F;
 			const float width = std::clamp(settings::panelWidth, 0.2F, 0.5F) * displayW;
+			ImGuiMCP::PushStyleColor(ImGuiMCP::ImGuiCol_NavHighlight, ImGuiMCP::ImVec4(0.0F, 0.0F, 0.0F, 0.0F));   // run 6: no blue nav outline
 			EditorWindow(snap, width, displayH);
 
 			// Mouse drag on the character (the owner, 2026-11-06 20:59): a left press on the open space outside every editor
@@ -857,6 +871,7 @@ namespace editor
 				}
 				if (dragging && io && io->MouseDelta.x != 0.0F) { bridge::TurnBy(io->MouseDelta.x * settings::turnSpeed); }
 			}
+			ImGuiMCP::PopStyleColor(1);
 			if (settings::scenePanel)
 			{
 				const float sceneW = displayW * 0.20F;
@@ -1044,6 +1059,12 @@ namespace editor
 	}
 
 	void ToolAnswer(bool a_yes) { g_toolAnswer = a_yes ? 1 : 2; }
+
+	void NoteChosen(const std::string& a_label, const std::string& a_description, bool a_race)
+	{
+		std::scoped_lock guard(g_toolSliderLock);
+		g_toolChosen = { a_label, a_description, a_race };
+	}
 
 	void SelectCategoryByName(const std::string& a_name)
 	{

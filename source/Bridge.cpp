@@ -16,6 +16,7 @@
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <future>
 
 // The RaceSex Menu, read and driven.
 //
@@ -52,6 +53,7 @@ namespace bridge
 		std::atomic<bool> g_menuOpen{ false };
 		std::atomic<std::uint32_t> g_generation{ 0 };
 		std::atomic<bool> g_probeQueued{ false };
+		std::atomic<bool> g_rebaseline{ false };   // after a race change: the new race's values are the new starting point
 
 		std::mutex g_pendingLock;
 		std::map<std::string, float> g_pendingSliders;        // guarded by g_pendingLock: coalesced writes, applied in one UI task
@@ -442,6 +444,11 @@ namespace bridge
 			std::uint32_t count = 0;
 			{
 				std::scoped_lock guard(g_lock);
+				if (g_rebaseline.exchange(false) && !model.sliders.empty())
+				{
+					g_openValues.clear();   // run 6: a race change set 28 sliders; they are the race's values, not the player's changes
+					logger::info("probe: new starting values after the race change");
+				}
 				for (auto& s : model.sliders)
 				{
 					auto [it, inserted] = g_openValues.try_emplace(s.key, s.value);
@@ -781,8 +788,8 @@ namespace bridge
 			// is the entry's own itemIndex when it has one (the unfiltered position otherwise).
 			RE::GFxValue itemIndex;
 			const double pressIndex = element.GetMember("itemIndex", &itemIndex) && itemIndex.IsNumber() ? itemIndex.GetNumber() : static_cast<double>(a_index);
-			// Run 5: the list clip's own onItemPress (CLIK's, which expects a clip event) changed nothing. RaceMenu's handler is the
-			// panels clip's (RaceMenuBase.psc's documented root; Apprentice replaces that one too), so it is tried first.
+			// SETTLED in run 6 (2026-11-06 21:15): RaceSexPanelsInstance.onItemPress({index, entry}) changes the race (Redguard on
+			// screen). The list clip's own onItemPress and the game's ChangeRace did not (runs 4 and 5).
 			std::vector<std::string> owners;
 			if (!route.empty() && route != "auto" && route != "changerace") { owners.push_back(route); }
 			owners.emplace_back(kMenuRoot);
@@ -811,6 +818,7 @@ namespace bridge
 					g_snap.model.itemPressOwner = owner;
 					Touch();
 				}
+				if (route != "changerace" && (raceFlag || !hasRace)) { g_rebaseline = raceFlag; }
 				ReprobeSoon(600);   // a race change rebuilds RaceMenu's sliders
 				return;
 			}
@@ -952,6 +960,91 @@ namespace bridge
 			std::this_thread::sleep_for(std::chrono::milliseconds(a_delayMs));
 			if (g_generation.load() == generation) { QueueProbe(); }
 		}).detach();
+	}
+
+	namespace
+	{
+		std::string Describe(const RE::GFxValue& a_v)
+		{
+			using T = RE::GFxValue::ValueType;
+			switch (a_v.GetType())
+			{
+			case T::kUndefined: return "undefined";
+			case T::kNull: return "null";
+			case T::kBoolean: return a_v.GetBool() ? "true" : "false";
+			case T::kNumber: return std::format("{:g}", a_v.GetNumber());
+			case T::kString:
+			case T::kStringW: return "\"" + Utf8(a_v) + "\"";
+			case T::kArray: return std::format("array[{}]", a_v.GetArraySize());
+			case T::kDisplayObject: return "clip";
+			default: return "object";
+			}
+		}
+
+		template <class F>
+		std::string OnUI(F a_fn)
+		{
+			auto* tasks = SKSE::GetTaskInterface();
+			if (!tasks || !g_menuOpen) { return R"({"ok":false,"error":"RaceMenu is not open"})"; }
+			auto promise = std::make_shared<std::promise<std::string>>();
+			auto future = promise->get_future();
+			tasks->AddUITask([promise, a_fn]() { promise->set_value(a_fn()); });
+			if (future.wait_for(std::chrono::seconds(5)) != std::future_status::ready) { return R"({"ok":false,"error":"the UI thread did not answer in 5 seconds"})"; }
+			return future.get();
+		}
+	}
+
+	// DevBench probe: every member of an AS path with its type and value (objects one level deep as their member names).
+	std::string MembersJson(const std::string& a_path)
+	{
+		return OnUI([a_path]() -> std::string {
+			RE::GFxMovieView* movie = Movie();
+			RE::GFxValue v;
+			if (!movie || !movie->GetVariable(&v, a_path.c_str())) { return std::format(R"({{"ok":false,"error":"{} not found"}})", Escape(a_path)); }
+			std::string out;
+			if (v.IsObject() || v.IsDisplayObject() || v.IsArray())
+			{
+				v.VisitMembers([&out](const char* a_name, const RE::GFxValue& a_m) {
+					if (!a_name || out.size() > 60000) { return; }
+					out += std::format("{}\"{}\":\"{}\"", out.empty() ? "" : ",", Escape(a_name), Escape(Describe(a_m)));
+				});
+			}
+			return std::format(R"({{"ok":true,"path":"{}","value":"{}","members":{{{}}}}})", Escape(a_path), Escape(Describe(v)), out);
+		});
+	}
+
+	// DevBench probe: call an AS function (path = owner.function) with number / string arguments and report the result.
+	std::string CallJson(const std::string& a_path, const std::vector<std::string>& a_args)
+	{
+		return OnUI([a_path, a_args]() -> std::string {
+			RE::GFxMovieView* movie = Movie();
+			const auto dot = a_path.rfind('.');
+			RE::GFxValue owner;
+			if (!movie || dot == std::string::npos || !movie->GetVariable(&owner, a_path.substr(0, dot).c_str()))
+			{
+				return std::format(R"({{"ok":false,"error":"{} not reachable"}})", Escape(a_path));
+			}
+			std::vector<RE::GFxValue> args(a_args.size());
+			for (std::size_t i = 0; i < a_args.size(); ++i)
+			{
+				char* end = nullptr;
+				const double d = std::strtod(a_args[i].c_str(), &end);
+				if (!a_args[i].empty() && end && *end == '\0') { args[i] = RE::GFxValue(d); }
+				else if (a_args[i] == "true" || a_args[i] == "false") { args[i] = RE::GFxValue(a_args[i] == "true"); }
+				else { movie->CreateString(&args[i], a_args[i].c_str()); }
+			}
+			RE::GFxValue result;
+			const bool ok = owner.Invoke(a_path.substr(dot + 1).c_str(), &result, args.empty() ? nullptr : args.data(), args.size());
+			std::string members;
+			if (result.IsObject() || result.IsArray())
+			{
+				result.VisitMembers([&members](const char* a_name, const RE::GFxValue& a_m) {
+					if (a_name) { members += std::format("{}\"{}\":\"{}\"", members.empty() ? "" : ",", Escape(a_name), Escape(Describe(a_m))); }
+				});
+			}
+			logger::info("probe call {}({} args): {} -> {}", a_path, a_args.size(), ok ? "ok" : "failed", Describe(result));
+			return std::format(R"({{"ok":{},"path":"{}","result":"{}","members":{{{}}}}})", ok, Escape(a_path), Escape(Describe(result)), members);
+		});
 	}
 
 	std::string Escape(const std::string& a_text)

@@ -143,6 +143,7 @@ namespace DevBenchTool
 					{
 						if (_stricmp(r.label.c_str(), n.c_str()) == 0)
 						{
+							editor::NoteChosen(r.label, r.description, !r.other);
 							list = static_cast<long>(r.list);
 							index = static_cast<long>(r.index);
 							break;
@@ -172,6 +173,32 @@ namespace DevBenchTool
 				out = State();
 			}
 			else if (op == "presets") { out = PresetsJson(); }
+			else if (op == "members")
+			{
+				// e.g. path=_root.RaceSexMenuBaseInstance.RaceSexPanelsInstance.racePanel.itemList._entryList.60 (a slider row)
+				out = bridge::MembersJson(StringFrom(args, "path"));
+			}
+			else if (op == "call")
+			{
+				// path=<owner.function> a0= a1= a2= a3= (numbers, true/false, or text) - e.g. _global.skse.plugins.CharGen.GetRaceSexCameraPos
+				std::vector<std::string> callArgs;
+				for (const char* k : { "a0", "a1", "a2", "a3" })
+				{
+					const auto v = ValueStart(args, k);
+					if (!v) { break; }
+					std::string text = StringFrom(args, k);
+					if (text.empty())
+					{
+						std::size_t e = 0;
+						while (e < v->size() && (*v)[e] != ',' && (*v)[e] != '}') { ++e; }
+						text = std::string(v->substr(0, e));
+						while (!text.empty() && text.front() == ' ') { text.erase(0, 1); }
+						while (!text.empty() && text.back() == ' ') { text.pop_back(); }
+					}
+					callArgs.push_back(text);
+				}
+				out = bridge::CallJson(StringFrom(args, "path"), callArgs);
+			}
 			else if (op == "show" || op == "hide")
 			{
 				editor::SetShown(op == "show", "devbench");
@@ -214,7 +241,7 @@ namespace DevBenchTool
 			"list's entries with their strings and numbers. op=plugins: _global.skse.plugins members and the game's own handlers for the menu. op=model from count: "
 			"categories, races, sliders (callback, value, range, open value, engine), function members. op=slider key=<slider key from op=model> value=<n>: move a slider as the "
 			"editor does. op=choose name=<race or choice> (or list=<i> index=<n>) [route=auto|changerace|<clip path>]: press it (the log names raceID, filteredIndex, itemIndex and the owner used). op=confirm / op=cancel: answer the open question (Done, Reset, Load...). op=category index=<n>: pick a rail entry. op=done: press "
-			"Done. op=presets: the preset folder and files. op=show / op=hide / op=switch: the editor window. op=reload: re-read the INI.\","
+			"Done. op=presets: the preset folder and files. op=members path=<AS path>: every member of it with type and value. op=call path=<owner.function> a0..a3: call an AS function and report the result (probe). op=show / op=hide / op=switch: the editor window. op=reload: re-read the INI.\","
 			"\"inputSchema\":{\"type\":\"object\",\"properties\":{\"op\":{\"type\":\"string\"},\"list\":{\"type\":\"integer\"},\"index\":{\"type\":\"integer\"},"
 			"\"from\":{\"type\":\"integer\"},\"count\":{\"type\":\"integer\"},\"callback\":{\"type\":\"string\"},\"value\":{\"type\":\"number\"}},\"additionalProperties\":true},"
 			"\"readOnly\":false"

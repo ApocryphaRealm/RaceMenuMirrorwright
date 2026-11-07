@@ -32,4 +32,8 @@ Written as changes happen, not reconstructed afterwards (rule 61). Each version 
 - Every confirmation box (Done, Reset, Load, replace, delete) draws its two choices as filled boxes: grey with light text, the focused one white with dark text. Focus starts on the confirming choice; Left / Right, the D-pad and Tab move it, the mouse focuses what it hovers; Enter / Space / A take the focused choice, Esc / B cancel.
 - A race tile is pressed through RaceMenu's own item-press handler on its panels clip first (run 5: the game's ChangeRace with the race's ID reloaded the sliders on top of the old ones and left the character as it was); sRaceRoute in the INI and route= in DevBench choose the route while it is confirmed. The log names each entry's raceID, filteredIndex and itemIndex.
 - Below the race and choice grids, the description of the race or choice last hovered or focused.
+- A race change is a new starting point: the sliders it sets do not count as changes, and Undo starts over (run 6 showed "28 changed" with Undo greyed out).
+- No keyboard-navigation outline around the focused control; the white fill is the focus.
+- The race description panel follows keyboard and pad focus and DevBench choices, not only the mouse.
+- DevBench probes op=members and op=call, to read slider rows and RaceMenu's camera functions in the next run.
 - Renamed RaceMenu Mirrorwright (working name Likeness): DLL, INI, log and translation files are RaceMenuMirrorwright.*, the DevBench tool is mirrorwright.control.
