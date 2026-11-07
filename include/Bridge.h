@@ -65,6 +65,7 @@ namespace bridge
 		int tintType = -1;          // tintType member (colour / tint rows), -1 when none
 		bool colour = false;        // the row carries a fillColor (a colour row)
 		std::uint32_t fill = 0;     // fillColor as 0xRRGGBB
+		bool hasFill = false;       // a real colour is known (the row's fillColor, or the character's tint); none: no square
 		bool noColour = false;      // a tint row whose tint is unused (alpha 0 or no layer): drawn as a grey 'none' square
 	};
 

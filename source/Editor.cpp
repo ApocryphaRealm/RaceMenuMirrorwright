@@ -19,6 +19,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <format>
 #include <functional>
 #include <mutex>
@@ -275,6 +276,27 @@ namespace editor
 		}
 
 		// An icon, then a button with the label - placed in the current row, shortened when a line is too narrow for it.
+		// The item that had the keyboard / pad focus last frame (render thread), so it can be drawn white with dark text - the
+		// same filled style as the confirmation boxes (the owner rejected the blue outline).
+		std::string g_focusedLast, g_focusedNow;
+
+		void FocusStylePush(const std::string& a_id, int& a_pushed)
+		{
+			a_pushed = 0;
+			if (a_id != g_focusedLast) { return; }
+			const ImGuiMCP::ImVec4 white(1.0F, 1.0F, 1.0F, 1.0F), dark(0.05F, 0.05F, 0.05F, 1.0F);
+			ImGuiMCP::PushStyleColor(ImGuiMCP::ImGuiCol_Button, white);
+			ImGuiMCP::PushStyleColor(ImGuiMCP::ImGuiCol_ButtonHovered, white);
+			ImGuiMCP::PushStyleColor(ImGuiMCP::ImGuiCol_Text, dark);
+			a_pushed = 3;
+		}
+
+		void FocusStyleNote(const std::string& a_id, int a_pushed)
+		{
+			if (ImGuiMCP::IsItemFocused()) { g_focusedNow = a_id; }
+			if (a_pushed) { ImGuiMCP::PopStyleColor(a_pushed); }
+		}
+
 		bool IconButton(unsigned a_cp, const char* a_label)
 		{
 			const float line = g_flow.active ? g_flow.maxW : ImGuiMCP::GetContentRegionAvail().x;
@@ -282,7 +304,10 @@ namespace editor
 			const std::string text = Ellipsize(a_label, std::max(10.0F, line - IconWidth() - 2.0F * PadX()), cut);
 			FlowPlace(IconWidth() + ImGuiMCP::CalcTextSize(text.c_str()).x + 2.0F * PadX());
 			Icon(a_cp);
+			int pushed = 0;
+			FocusStylePush(a_label, pushed);
 			const bool hit = ImGuiMCP::Button((text + "###" + a_label).c_str());
+			FocusStyleNote(a_label, pushed);
 			if (cut && ImGuiMCP::IsItemHovered()) { ImGuiMCP::SetTooltip("%s", a_label); }
 			return hit;
 		}
@@ -294,7 +319,10 @@ namespace editor
 			bool cut = false;
 			const std::string text = Ellipsize(a_label, std::max(10.0F, line - 2.0F * PadX()), cut);
 			FlowPlace(ImGuiMCP::CalcTextSize(text.c_str()).x + 2.0F * PadX());
+			int pushed = 0;
+			FocusStylePush(a_label, pushed);
 			const bool hit = ImGuiMCP::Button((text + "###" + a_label).c_str());
+			FocusStyleNote(a_label, pushed);
 			if (cut && ImGuiMCP::IsItemHovered()) { ImGuiMCP::SetTooltip("%s", a_label); }
 			return hit;
 		}
@@ -352,6 +380,63 @@ namespace editor
 			if (a_step >= 1.0F) { return "%.0f"; }
 			if (a_step >= 0.1F) { return "%.1f"; }
 			return "%.2f";
+		}
+
+		// ---- keys read directly ------------------------------------------------------------------------------------------
+		using XInputGetStateFn = DWORD(WINAPI*)(DWORD, void*);
+
+		XInputGetStateFn XInputState()
+		{
+			static XInputGetStateFn fn = nullptr;
+			static bool looked = false;
+			if (!looked)
+			{
+				looked = true;
+				for (const wchar_t* dll : { L"xinput1_4.dll", L"xinput1_3.dll", L"xinput9_1_0.dll" })
+				{
+					if (HMODULE m = GetModuleHandleW(dll))   // already loaded by the game or Steam; never LoadLibrary
+					{
+						fn = reinterpret_cast<XInputGetStateFn>(GetProcAddress(m, "XInputGetState"));
+						if (fn)
+						{
+							logger::info("R3: reading the pad through {} (already loaded)", std::filesystem::path(dll).string());
+							break;
+						}
+					}
+				}
+				if (!fn) { logger::info("R3: no XInput DLL is loaded in the game; R3 is read through the framework only"); }
+			}
+			return fn;
+		}
+
+		void PollDirectKeys()
+		{
+			// R3: rising edge of XINPUT_GAMEPAD_RIGHT_THUMB on any of the four pads.
+			static WORD lastButtons = 0;
+			if (auto fn = XInputState())
+			{
+				struct { DWORD packet; WORD buttons; BYTE lt, rt; SHORT lx, ly, rx, ry; } state{};
+				WORD now = 0;
+				for (DWORD pad = 0; pad < 4; ++pad)
+				{
+					if (fn(pad, &state) == ERROR_SUCCESS) { now |= state.buttons; }
+				}
+				if ((now & 0x0080) && !(lastButtons & 0x0080))
+				{
+					logger::debug("R3 down (XInput buttons 0x{:04X})", now);
+					OnPadZoom("XInput poll");
+				}
+				lastButtons = now;
+			}
+			// F4 (the switch key) from the OS, while the game window is in front - whoever holds ImGui's focus.
+			static bool lastSwitch = false;
+			const UINT vk = settings::switchKey ? MapVirtualKeyW(settings::switchKey, MAPVK_VSC_TO_VK) : 0;
+			HWND front = GetForegroundWindow();
+			DWORD pid = 0;
+			if (front) { GetWindowThreadProcessId(front, &pid); }
+			const bool down = vk && pid == GetCurrentProcessId() && (GetAsyncKeyState(static_cast<int>(vk)) & 0x8000) != 0;
+			if (down && !lastSwitch) { OnSwitchKey("keyboard (OS)"); }
+			lastSwitch = down;
 		}
 
 		// ---- the rail ---------------------------------------------------------------------------------------------------
@@ -482,7 +567,7 @@ namespace editor
 			float v = a_s.value;
 			const bool changed = !std::isnan(a_s.openValue) && a_s.value != a_s.openValue;
 			const std::string label = (changed ? "* " : "") + a_s.label;
-			if (a_s.colour)
+			if (a_s.colour && (a_s.hasFill || a_s.noColour))
 			{
 				// A filled square drawn on the window's draw list (run 9: the icon-font square drew nothing). ImU32 is ABGR.
 				const float h = ImGuiMCP::GetFrameHeight() * 0.7F;
@@ -496,7 +581,12 @@ namespace editor
 				ImGuiMCP::Dummy(ImGuiMCP::ImVec2(h, h));
 				ImGuiMCP::SameLine();
 			}
-			ImGuiMCP::TextUnformatted(label.c_str());
+			{
+				bool cut = false;
+				const std::string shown = Ellipsize(label, std::max(10.0F, ImGuiMCP::GetContentRegionAvail().x), cut);
+				ImGuiMCP::TextUnformatted(shown.c_str());
+				if (cut && ImGuiMCP::IsItemHovered()) { ImGuiMCP::SetTooltip("%s", label.c_str()); }
+			}
 			if (settings::showInternalNames) { ImGuiMCP::TextDisabled("%s", a_s.callback.c_str()); }
 			const float lo = settings::allowPastRange ? std::min(a_s.min, a_s.max * -2.0F) : a_s.min;
 			const float hi = settings::allowPastRange ? a_s.max * 2.0F : a_s.max;
@@ -722,7 +812,12 @@ namespace editor
 				FlowPlace(IconWidth() + searchW);
 				Icon(fa::kSearch);
 				ImGuiMCP::PushItemWidth(searchW);
-				ImGuiMCP::InputTextWithHint("##search", NTR("RMM_SearchHint", "Search every slider (Ctrl+F)"), g_search, sizeof(g_search));
+				{
+					bool cut = false;
+					const std::string hint = Ellipsize(NTR("RMM_SearchHint", "Search every slider (Ctrl+F)"), std::max(10.0F, searchW - 2.0F * PadX()), cut);
+					ImGuiMCP::InputTextWithHint("##search", hint.c_str(), g_search, sizeof(g_search));
+					if (cut && ImGuiMCP::IsItemHovered() && g_search[0] == '\0') { ImGuiMCP::SetTooltip("%s", NTR("RMM_SearchHint", "Search every slider (Ctrl+F)")); }
+				}
 				ImGuiMCP::PopItemWidth();
 				const auto changed = std::count_if(a_s.model.sliders.begin(), a_s.model.sliders.end(),
 					[](const bridge::Slider& s) { return !std::isnan(s.openValue) && s.value != s.openValue; });
@@ -754,8 +849,14 @@ namespace editor
 					{
 						const auto& item = rail[static_cast<std::size_t>(i)];
 						Icon(item.kind == RailItem::Kind::kDiscovery ? fa::kDiscovery : item.kind == RailItem::Kind::kChoices ? fa::kChoices : CategoryIcon(item.flag, item.label));
-						const std::string label = item.label + "##rail" + std::to_string(i);
-						if (ImGuiMCP::Selectable(label.c_str(), !searching && i == category))
+						// A narrow rail shows icons only; otherwise the label is shortened to the rail with the full name as a tooltip.
+						const float room = ImGuiMCP::GetContentRegionAvail().x;
+						bool cut = false;
+						const std::string shown = room < ImGuiMCP::GetFrameHeight() * 2.5F ? std::string() : Ellipsize(item.label, std::max(10.0F, room), cut);
+						const std::string label = shown + "##rail" + std::to_string(i);
+						const bool picked = ImGuiMCP::Selectable(label.c_str(), !searching && i == category);
+						if ((cut || shown.empty()) && ImGuiMCP::IsItemHovered()) { ImGuiMCP::SetTooltip("%s", item.label.c_str()); }
+						if (picked)
 						{
 							category = i;
 							g_category = i;
@@ -899,7 +1000,11 @@ namespace editor
 					{
 						const auto& p = g_presets[static_cast<std::size_t>(i)];
 						ImGuiMCP::BeginDisabled(!p.loadable);
-						if (ImGuiMCP::Selectable((p.name + "##p" + std::to_string(i)).c_str(), i == g_selectedPreset))
+						bool cut = false;
+						const std::string shown = Ellipsize(p.name, std::max(10.0F, ImGuiMCP::GetContentRegionAvail().x), cut);
+						const bool picked = ImGuiMCP::Selectable((shown + "##p" + std::to_string(i)).c_str(), i == g_selectedPreset);
+						if (cut && ImGuiMCP::IsItemHovered()) { ImGuiMCP::SetTooltip("%s", p.name.c_str()); }
+						if (picked)
 						{
 							g_selectedPreset = i;
 							std::snprintf(g_presetName, sizeof(g_presetName), "%s", p.name.c_str());
@@ -1019,6 +1124,12 @@ namespace editor
 				if (dragging && io && io->MouseDelta.x != 0.0F) { bridge::TurnBy(io->MouseDelta.x * settings::turnSpeed); }
 			}
 			ImGuiMCP::PopStyleColor(1);
+			g_focusedLast = g_focusedNow;
+			g_focusedNow.clear();
+
+			// The pad's R3 and the switch key, read where they demonstrably arrive (run 13: the game's input events never
+			// reached the editor's sink while it was up; ImGui did not see R3; F4 was lost while ImGui held pad focus).
+			PollDirectKeys();
 			if (settings::scenePanel)
 			{
 				const float sceneW = displayW * 0.20F;

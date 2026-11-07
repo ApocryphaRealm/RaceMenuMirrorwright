@@ -405,7 +405,8 @@ namespace bridge
 						if (fc || s.tintType >= 0 || colourCallback)
 						{
 							s.colour = true;
-							s.fill = fc ? static_cast<std::uint32_t>(*fc) & 0xFFFFFF : 0x808080;
+							s.fill = fc ? static_cast<std::uint32_t>(*fc) & 0xFFFFFF : 0;
+							s.hasFill = fc != nullptr;
 						}
 						if (fc || s.tintType >= 0 || colourCallback || Str(e, "hasColor") || Num(e, "hasColor"))
 						{
@@ -475,7 +476,7 @@ namespace bridge
 					// Run 12: the hair colour form's tint (#383B2C) is not what the player sees - the gold comes from the hair texture
 					// - and RaceMenu's own list draws the row's own colour. So the swatch shows the row's colour, as RaceMenu does.
 					const auto* form = npc && npc->headRelatedData ? npc->headRelatedData->hairColor : nullptr;
-					logger::info("swatch {}: the row's own colour #{:06X} (as RaceMenu's list shows it); hair colour form {:08X}", s.label, s.fill,
+					logger::info("swatch {}: {} (hair colour form {:08X})", s.label, s.hasFill ? std::format("the row's own colour #{:06X}", s.fill) : std::string("no colour on the row - no square"),
 						form ? form->GetFormID() : 0u);
 					continue;
 				}
@@ -486,6 +487,7 @@ namespace bridge
 					if (tm && static_cast<int>(tm->type.underlying()) == s.tintType)
 					{
 						s.noColour = tm->alpha <= 0.0F;
+						s.hasFill = true;
 						s.fill = (static_cast<std::uint32_t>(tm->color.red) << 16) | (static_cast<std::uint32_t>(tm->color.green) << 8) | tm->color.blue;
 						logger::debug("swatch {}: tint type {} -> #{:06X}", s.label, s.tintType, s.fill);
 						break;

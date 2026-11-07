@@ -51,4 +51,8 @@ Written as changes happen, not reconstructed afterwards (rule 61). Each version 
 - Swatches: the hair colour is shown doubled (the hair shader brightens it; raw and shown values logged); an unused tint shows a dim grey square instead of white.
 - The pad's R3 zooms through the game's own input event as well as the editor's own read (one zoom per press); every pad button the editor sees is logged at debug level.
 - Hair Color's swatch shows the row's own colour, as RaceMenu's list does (the hair colour form's tint is not the colour the hair renders).
+- R3 is read from XInput directly (through the XInput DLL the game already loaded; nothing new is loaded) and the switch key from the keyboard while the game is in front, so neither depends on who holds ImGui's focus.
+- The focused button is drawn white with dark text, like the confirmation boxes.
+- Every text item fits its parent: rail names, slider labels, the search hint and preset names are shortened with "..." and shown in full in a tooltip; a narrow rail shows icons only.
+- A colour row with no known colour draws no square (no grey placeholder).
 - Renamed RaceMenu Mirrorwright (working name Likeness): DLL, INI, log and translation files are RaceMenuMirrorwright.*, the DevBench tool is mirrorwright.control.
