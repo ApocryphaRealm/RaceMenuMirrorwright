@@ -20,4 +20,7 @@ Written as changes happen, not reconstructed afterwards (rule 61). Each version 
 - From the first in-game run: the rail takes its names and order from RaceMenu's own category list (no raw flag numbers, no "$ALL"), the race grid has no empty tiles, sliders are told apart by callback and slider ID (the false "266 changed" came from many sliders sharing one game callback), the rail no longer grows on a re-read, and the menu's lists are read from their known paths before the walk (the walk had hit its node limit).
 - Sliders handled by the game are passed to it through the menu's GameDelegate with their slider ID; Done calls the game's ConfirmDone the same way.
 - Controls: Q / E and the right stick turn the character (RaceMenu's CharGen rotation), Turn left / right buttons, L toggles the light, R or the pad's X presses Done; opened from the console, the editor waits until the console closes.
+- Font Awesome icons on the rail, Undo / Redo / Reset / Done, the preset buttons, Light, Turn, search and the switch.
+- Turning turns the player's own heading (RaceMenu's Scaleform rotation gave no value in the second run); held keys and the stick add up into one turn per frame.
+- The INI key for passing sliders to the game is now bGameSliderCalls (default 1): an installed INI from the first build kept bEngineSliderCalls = 0, which switched the sliders off.
 - Renamed RaceMenu Mirrorwright (working name Likeness): DLL, INI, log and translation files are RaceMenuMirrorwright.*, the DevBench tool is mirrorwright.control.

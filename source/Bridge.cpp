@@ -31,7 +31,7 @@
 // Writing: a slider sets its entry's value, then calls RaceMenu's documented RSM_SetSliderParameters on the panels clip
 // (RaceMenuBase.psc's SetSliderParameters), then sends RaceMenu's documented mod event RSM_SliderChange(callback, value),
 // which RaceMenu's own script and every RaceMenuBase slider plugin listen to. A slider whose callback is one of the game's
-// own handlers is also passed through the movie's GameDelegate when bEngineSliderCalls = 1 (off by default until the test
+// own handlers is also passed through the movie's GameDelegate when bGameSliderCalls = 1 (off by default until the test
 // run shows the argument shape). A race or another mod's choice goes through the movie's own onItemPress({index, entry})
 // (past mistake 2026-10-04: never ChangeRace).
 
@@ -844,31 +844,48 @@ namespace bridge
 		return true;
 	}
 
+	// Turning (test run 2026-11-06 20:41: CharGen.GetPlayerRotation gave no number, so RaceMenu's Scaleform rotation is not
+	// used). The player's own heading is turned on the main thread with Actor::SetHeading. Presses arrive every frame while a
+	// key or the stick is held; they add up here and one main-thread task applies the sum.
+	namespace
+	{
+		std::mutex g_turnLock;
+		float g_turnPending = 0.0F;          // guarded by g_turnLock, degrees
+		std::atomic<bool> g_turnQueued{ false };
+	}
+
 	void TurnBy(float a_degrees)
 	{
 		auto* tasks = SKSE::GetTaskInterface();
 		if (!tasks || !g_menuOpen || a_degrees == 0.0F) { return; }
-		tasks->AddUITask([a_degrees]() {
-			RE::GFxMovieView* movie = Movie();
-			if (!movie) { return; }
-			RE::GFxValue chargen;
-			if (!movie->GetVariable(&chargen, "_global.skse.plugins.CharGen") || !chargen.IsObject())
+		{
+			std::scoped_lock guard(g_turnLock);
+			g_turnPending += a_degrees;
+		}
+		if (g_turnQueued.exchange(true)) { return; }
+		tasks->AddTask([]() {
+			g_turnQueued = false;
+			float degrees = 0.0F;
 			{
-				static bool warned = false;
-				if (!warned) { warned = true; logger::warn("turn: skse.plugins.CharGen is not there"); }
-				return;
+				std::scoped_lock guard(g_turnLock);
+				degrees = g_turnPending;
+				g_turnPending = 0.0F;
 			}
-			RE::GFxValue current;
-			if (!chargen.Invoke("GetPlayerRotation", &current) || !current.IsNumber())
-			{
-				static bool warned = false;
-				if (!warned) { warned = true; logger::warn("turn: CharGen.GetPlayerRotation gave no number - CONFIRM IN THE TEST RUN"); }
-				return;
-			}
-			RE::GFxValue next(current.GetNumber() + static_cast<double>(a_degrees));
-			chargen.Invoke("SetPlayerRotation", nullptr, &next, 1);
+			auto* player = RE::PlayerCharacter::GetSingleton();
+			if (!player || degrees == 0.0F) { return; }
+			constexpr float kPi = 3.14159265F;
+			const float before = player->GetAngleZ();
+			float after = before + degrees * kPi / 180.0F;
+			while (after < 0.0F) { after += 2.0F * kPi; }
+			while (after >= 2.0F * kPi) { after -= 2.0F * kPi; }
+			player->SetHeading(after);
 			static bool logged = false;
-			if (!logged) { logged = true; logger::info("turn: rotation {:.2f} -> {:.2f} (first turn of the session)", current.GetNumber(), next.GetNumber()); }
+			if (!logged)
+			{
+				logged = true;
+				logger::info("turn: player heading {:.3f} -> {:.3f} rad (Actor::SetHeading; first turn of the session)", before, after);
+			}
+			logger::debug("turn: {:.2f} degrees, heading {:.3f} -> {:.3f}", degrees, before, player->GetAngleZ());
 		});
 	}
 

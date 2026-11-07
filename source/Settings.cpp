@@ -47,7 +47,7 @@ namespace settings
 				{ "General", "bEnabled", &enabled, true },
 				{ "General", "bStartInEditor", &startInEditor, true },
 				{ "General", "bHideRaceMenuPanels", &hideRaceMenuPanels, true },
-				{ "Advanced", "bEngineSliderCalls", &engineSliderCalls, true },
+				{ "Advanced", "bGameSliderCalls", &engineSliderCalls, true },
 				{ "Layout", "bScenePanel", &scenePanel, true },
 				{ "Editor", "bAskBeforeDone", &askBeforeDone, true },
 				{ "Editor", "bGroupHeaders", &groupHeaders, true },
@@ -128,7 +128,7 @@ namespace settings
 			logger::info("  enabled={} startInEditor={} scale={:.2f} panelWidth={:.2f} scenePanel={}", enabled, startInEditor, scale, panelWidth, scenePanel);
 			logger::info("  askBeforeDone={} groupHeaders={} hideOtherBodySliders={} allowPastRange={} showInternalNames={}", askBeforeDone, groupHeaders,
 				hideOtherBodySliders, allowPastRange, showInternalNames);
-			logger::info("  turnSpeed={:.2f} switchKey=0x{:02X} logLevel={} hidePanels={} engineSliderCalls={} doneFunction='{}'", turnSpeed, switchKey, logLevel,
+			logger::info("  turnSpeed={:.2f} switchKey=0x{:02X} logLevel={} hidePanels={} gameSliderCalls={} doneFunction='{}'", turnSpeed, switchKey, logLevel,
 				hideRaceMenuPanels, engineSliderCalls, doneFunction);
 			return true;
 		}
