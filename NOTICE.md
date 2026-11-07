@@ -1,4 +1,4 @@
-# Likeness - copyright and licence
+# RaceMenu Mirrorwright - copyright and licence
 
 Copyright (C) 2026 ApocryphaRealm
 
@@ -24,7 +24,7 @@ Components under other licences, with their notices: `THIRD_PARTY_NOTICES.md`.
 
 ## Clean-room statement
 
-Likeness is written from scratch. It does what RaceMenu Atelier (by RustyOldSword, formerly emberchain) showed a
+RaceMenu Mirrorwright is written from scratch. It does what RaceMenu Atelier (by RustyOldSword, formerly emberchain) showed a
 character editor over RaceMenu can do, rebuilt from that mod's public description and observed behaviour only; no code,
 script, movie, art or file layout is taken from it or from any fork of it. RaceMenu (expired6978) is not included and is
 used only through what it exposes while the game runs.

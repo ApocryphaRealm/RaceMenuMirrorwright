@@ -1,8 +1,8 @@
 {
-  "name": "likeness-17",
+  "name": "racemenumirrorwright-17",
   "version-string": "1.0.0",
-  "description": "Likeness - a character editor drawn over RaceMenu through the Apocrypha Menu Framework [Skyrim 1.7.x build line: CommonLibSSE-NG 7.2.0, cmake/ports-17]",
-  "homepage": "https://github.com/ApocryphaRealm/Likeness",
+  "description": "RaceMenu Mirrorwright - a character editor drawn over RaceMenu through the Apocrypha Menu Framework [Skyrim 1.7.x build line: CommonLibSSE-NG 7.2.0, cmake/ports-17]",
+  "homepage": "https://github.com/ApocryphaRealm/RaceMenuMirrorwright",
   "license": "GPL-3.0-or-later",
   "dependencies": [
     "commonlibsse-ng",

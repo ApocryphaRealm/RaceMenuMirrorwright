@@ -46,6 +46,8 @@ namespace settings
 			static const std::vector<BoolKey> keys = {
 				{ "General", "bEnabled", &enabled, true },
 				{ "General", "bStartInEditor", &startInEditor, true },
+				{ "General", "bHideRaceMenuPanels", &hideRaceMenuPanels, true },
+				{ "Advanced", "bEngineSliderCalls", &engineSliderCalls, false },
 				{ "Layout", "bScenePanel", &scenePanel, true },
 				{ "Editor", "bAskBeforeDone", &askBeforeDone, true },
 				{ "Editor", "bGroupHeaders", &groupHeaders, true },
@@ -119,13 +121,15 @@ namespace settings
 					logger::warn("INI value \"{}\" for [{}] {} is not valid; keeping the current value", value, section, key);
 					continue;
 				}
+				if (section == "advanced" && key == "sdonefunction") { doneFunction = value; known = true; }
 				if (!known) { logger::debug("INI key [{}] {} is not one of ours; left alone", section, key); }
 			}
 			logger::info("settings read from {}", iniPath);
 			logger::info("  enabled={} startInEditor={} scale={:.2f} panelWidth={:.2f} scenePanel={}", enabled, startInEditor, scale, panelWidth, scenePanel);
 			logger::info("  askBeforeDone={} groupHeaders={} hideOtherBodySliders={} allowPastRange={} showInternalNames={}", askBeforeDone, groupHeaders,
 				hideOtherBodySliders, allowPastRange, showInternalNames);
-			logger::info("  turnSpeed={:.2f} switchKey=0x{:02X} logLevel={}", turnSpeed, switchKey, logLevel);
+			logger::info("  turnSpeed={:.2f} switchKey=0x{:02X} logLevel={} hidePanels={} engineSliderCalls={} doneFunction='{}'", turnSpeed, switchKey, logLevel,
+				hideRaceMenuPanels, engineSliderCalls, doneFunction);
 			return true;
 		}
 
@@ -187,6 +191,7 @@ namespace settings
 		}
 		for (const auto& k : Bools()) { WriteKey(lines, k.section, k.key, *k.target ? "1" : "0"); }
 		for (const auto& k : Floats()) { WriteKey(lines, k.section, k.key, std::format("{:.2f}", *k.target)); }
+		WriteKey(lines, "Advanced", "sDoneFunction", doneFunction);
 		for (const auto& k : UInts()) { WriteKey(lines, k.section, k.key, k.hex ? std::format("0x{:02X}", *k.target) : std::to_string(*k.target)); }
 
 		std::ofstream out(iniPath, std::ios::trunc);
@@ -203,6 +208,7 @@ namespace settings
 	void RestoreDefaults()
 	{
 		for (const auto& k : Bools()) { *k.target = k.def; }
+		doneFunction.clear();
 		for (const auto& k : Floats()) { *k.target = k.def; }
 		for (const auto& k : UInts())
 		{

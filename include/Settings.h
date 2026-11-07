@@ -11,6 +11,7 @@ namespace settings
 	// [General]
 	inline bool enabled = true;             // bEnabled - draw the editor over RaceMenu (0: RaceMenu's own interface only)
 	inline bool startInEditor = true;       // bStartInEditor - the editor is up when RaceMenu opens
+	inline bool hideRaceMenuPanels = true;  // bHideRaceMenuPanels - hide RaceMenu's own panels while the editor is up
 
 	// [Layout]
 	inline float scale = 1.0F;              // fScale - size of the editor, 0.50 - 2.00
@@ -29,6 +30,10 @@ namespace settings
 
 	// [Controls]
 	inline std::uint32_t switchKey = 0x3E;  // iSwitchKey - DirectInput scan code; F4 (DEFAULT-KEYS.md). 0 = unbound
+
+	// [Advanced] - for the test run; CONFIRM IN THE TEST RUN (PLAN.md)
+	inline bool engineSliderCalls = false;  // bEngineSliderCalls - also pass a game-handled slider through the movie's GameDelegate
+	inline std::string doneFunction;        // sDoneFunction - the AS function Done calls; empty = found by name at run time
 
 	// [Debug]
 	inline std::uint32_t logLevel = 2;      // uLogLevel - 2 = info (rule 14)

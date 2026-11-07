@@ -5,6 +5,8 @@
 #include "Bridge.h"
 #include "DevBench/DevBenchAPI.h"
 #include "Editor.h"
+#include "Name.h"
+#include "Presets.h"
 #include "Settings.h"
 #include "utils/Logger.h"
 #include "utils/Strings.h"
@@ -21,35 +23,46 @@ namespace DevBenchTool
 {
 	namespace
 	{
-		// The string value of "op".
-		std::string OpFrom(std::string_view a_args)
+		std::optional<std::string_view> ValueStart(std::string_view a_args, const char* a_name)
 		{
-			const auto at = a_args.find("\"op\"");
-			if (at == std::string_view::npos) { return {}; }
-			const auto colon = a_args.find(':', at + 4);
-			if (colon == std::string_view::npos) { return {}; }
-			const auto open = a_args.find('"', colon + 1);
-			if (open == std::string_view::npos) { return {}; }
-			const auto close = a_args.find('"', open + 1);
-			if (close == std::string_view::npos) { return {}; }
-			return std::string(a_args.substr(open + 1, close - open - 1));
-		}
-
-		// A whole-number field ("list":3 or "list":"3"). Missing: nothing.
-		std::optional<long> NumberFrom(std::string_view a_args, const char* a_name)
-		{
-			const std::string key = std::string("\"") + a_name + "\"";
+			const std::string key = std::string(1, '"') + a_name + '"';
 			const auto at = a_args.find(key);
 			if (at == std::string_view::npos) { return std::nullopt; }
-			auto p = a_args.find(':', at + key.size());
-			if (p == std::string_view::npos) { return std::nullopt; }
-			++p;
-			while (p < a_args.size() && (a_args[p] == ' ' || a_args[p] == '"')) { ++p; }
-			const std::string rest(a_args.substr(p, 16));
+			const auto colon = a_args.find(':', at + key.size());
+			if (colon == std::string_view::npos) { return std::nullopt; }
+			return a_args.substr(colon + 1);
+		}
+
+		// The string value of a field ("op":"state").
+		std::string StringFrom(std::string_view a_args, const char* a_name)
+		{
+			const auto v = ValueStart(a_args, a_name);
+			if (!v) { return {}; }
+			const auto open = v->find('"');
+			if (open == std::string_view::npos) { return {}; }
+			const auto close = v->find('"', open + 1);
+			if (close == std::string_view::npos) { return {}; }
+			return std::string(v->substr(open + 1, close - open - 1));
+		}
+
+		std::optional<double> DoubleFrom(std::string_view a_args, const char* a_name)
+		{
+			auto v = ValueStart(a_args, a_name);
+			if (!v) { return std::nullopt; }
+			std::size_t p = 0;
+			while (p < v->size() && ((*v)[p] == ' ' || (*v)[p] == '"')) { ++p; }
+			const std::string rest(v->substr(p, 24));
 			char* end = nullptr;
-			const long v = std::strtol(rest.c_str(), &end, 10);
+			const double d = std::strtod(rest.c_str(), &end);
 			if (end == rest.c_str()) { return std::nullopt; }
-			return v;
+			return d;
+		}
+
+		std::optional<long> NumberFrom(std::string_view a_args, const char* a_name)
+		{
+			const auto d = DoubleFrom(a_args, a_name);
+			if (!d) { return std::nullopt; }
+			return static_cast<long>(*d);
 		}
 
 		std::string State()
@@ -57,34 +70,84 @@ namespace DevBenchTool
 			return std::format(R"({{"ok":true,"op":"state","editor":{},"bridge":{},"strings":{}}})", editor::StateJson(), bridge::StateJson(), strings::StatusJson());
 		}
 
-		// Queue a probe and wait (off the game threads - this is DevBench's listener thread) until the snapshot moves.
-		std::string ProbeAndWait()
+		// Waits (on DevBench's listener thread, never a game thread) until the snapshot moves or the time runs out.
+		std::string WaitForChange(std::uint64_t a_before, int a_ms)
 		{
-			const auto before = bridge::Copy().serial;
-			if (!bridge::RequestProbe()) { return R"({"ok":false,"op":"probe","error":"RaceMenu is not open"})"; }
-			for (int i = 0; i < 50; ++i)
+			for (int waited = 0; waited < a_ms; waited += 100)
 			{
 				std::this_thread::sleep_for(std::chrono::milliseconds(100));
-				if (bridge::Copy().serial != before) { return State(); }
+				if (bridge::Copy().serial != a_before) { break; }
 			}
-			return R"({"ok":false,"op":"probe","error":"the UI thread did not run the probe in 5 seconds"})";
+			return State();
+		}
+
+		std::string PresetsJson()
+		{
+			std::string out;
+			for (const auto& p : presets::List())
+			{
+				out += std::format(R"({}{{"name":"{}","loadable":{}}})", out.empty() ? "" : ",", bridge::Escape(p.name), p.loadable);
+			}
+			return std::format(R"({{"ok":true,"folder":"{}","presets":[{}]}})", bridge::Escape(presets::Folder()), out);
 		}
 
 		void ControlTool(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 		{
 			const std::string args = a_argsJson ? a_argsJson : "";
-			const std::string op = OpFrom(args);
+			const std::string op = StringFrom(args, "op");
 			std::string out;
 			if (op.empty() || op == "state") { out = State(); }
-			else if (op == "probe") { out = ProbeAndWait(); }
+			else if (op == "probe")
+			{
+				const auto before = bridge::Copy().serial;
+				out = bridge::RequestProbe() ? WaitForChange(before, 5000) : R"({"ok":false,"op":"probe","error":"RaceMenu is not open"})";
+			}
 			else if (op == "list")
 			{
-				const auto index = NumberFrom(args, "list").value_or(0);
-				const auto from = NumberFrom(args, "from").value_or(0);
-				const auto count = NumberFrom(args, "count").value_or(50);
-				out = bridge::ListJson(static_cast<std::size_t>(std::max(0L, index)), static_cast<std::size_t>(std::max(0L, from)), static_cast<std::size_t>(std::max(1L, count)));
+				out = bridge::ListJson(static_cast<std::size_t>(std::max(0L, NumberFrom(args, "list").value_or(0))),
+					static_cast<std::size_t>(std::max(0L, NumberFrom(args, "from").value_or(0))), static_cast<std::size_t>(std::max(1L, NumberFrom(args, "count").value_or(50))));
 			}
 			else if (op == "plugins") { out = bridge::PluginsJson(); }
+			else if (op == "model")
+			{
+				out = bridge::ModelJson(static_cast<std::size_t>(std::max(0L, NumberFrom(args, "from").value_or(0))),
+					static_cast<std::size_t>(std::max(1L, NumberFrom(args, "count").value_or(100))));
+			}
+			else if (op == "slider")
+			{
+				const std::string callback = StringFrom(args, "callback");
+				const auto value = DoubleFrom(args, "value");
+				if (callback.empty() || !value) { out = R"({"ok":false,"error":"op=slider needs callback and value"})"; }
+				else
+				{
+					bridge::SetSlider(callback, static_cast<float>(*value));
+					std::this_thread::sleep_for(std::chrono::milliseconds(300));
+					out = State();
+				}
+			}
+			else if (op == "choose")
+			{
+				const auto list = NumberFrom(args, "list");
+				const auto index = NumberFrom(args, "index");
+				if (!list || !index) { out = R"({"ok":false,"error":"op=choose needs list and index"})"; }
+				else
+				{
+					const auto before = bridge::Copy().serial;
+					bridge::ChooseEntry(static_cast<std::uint32_t>(*list), static_cast<std::uint32_t>(*index));
+					out = WaitForChange(before, 3000);
+				}
+			}
+			else if (op == "category")
+			{
+				editor::SelectCategory(static_cast<int>(NumberFrom(args, "index").value_or(0)));
+				out = State();
+			}
+			else if (op == "done")
+			{
+				editor::RequestFinish();
+				out = State();
+			}
+			else if (op == "presets") { out = PresetsJson(); }
 			else if (op == "show" || op == "hide")
 			{
 				editor::SetShown(op == "show", "devbench");
@@ -101,7 +164,7 @@ namespace DevBenchTool
 				out = std::format(R"({{"ok":{},"op":"reload","ini":"{}"}})", ok ? "true" : "false", bridge::Escape(settings::GetIniPath()));
 			}
 			else { out = std::format(R"({{"ok":false,"error":"unknown op '{}'"}})", bridge::Escape(op)); }
-			logger::debug("likeness.control {} -> {} bytes", op.empty() ? "state" : op, out.size());
+			logger::debug("{} {} -> {} bytes", name::kDevBenchTool, op.empty() ? "state" : op, out.size());
 			a_write(a_sink, out.c_str());
 		}
 	}
@@ -114,28 +177,30 @@ namespace DevBenchTool
 		DevBenchAPI::IDevBenchInterface001* devBench = DevBenchAPI::GetDevBenchInterface001();
 		if (!devBench)
 		{
-			if (a_lastAttempt) { logger::info("DevBench not detected; skipping the \"likeness.control\" tool"); }
+			if (a_lastAttempt) { logger::info("DevBench not detected; skipping the \"{}\" tool", name::kDevBenchTool); }
 			else { logger::debug("DevBench not detected yet; will retry at the next message"); }
 			return;
 		}
 
 		constexpr const char* descriptor =
 			"{"
-			"\"description\":\"Likeness (a character editor over RaceMenu) live state and driver. No op / op=state: the editor window (available, shown, why, "
-			"switches, frames drawn), the bridge (RaceMenu open, probes, every list found in the RaceSex Menu movie with its path, size and first-element "
-			"fields) and the language. op=probe: read RaceMenu's movie again and answer when done. op=list list=<index> from=<n> count=<n>: the entries of a "
-			"found list (label and number members). op=plugins: every _global.skse.plugins object and its members. op=show / op=hide: the editor window. "
-			"op=switch: the switch key's action. op=reload: re-read the INI.\","
-			"\"inputSchema\":{\"type\":\"object\",\"properties\":{\"op\":{\"type\":\"string\"},\"list\":{\"type\":\"integer\"},\"from\":{\"type\":\"integer\"},"
-			"\"count\":{\"type\":\"integer\"}},\"additionalProperties\":true},"
+			"\"description\":\"RaceMenu Mirrorwright (a character editor over RaceMenu) live state and driver. No op / op=state: the editor (shown, why, switches, "
+			"frames, rail entry), the bridge (RaceMenu open, probes, the model: races, sliders, changed count, which lists and member names were chosen, the "
+			"onItemPress owner, the Done function, panels hidden) and every list found in the movie. op=probe: read RaceMenu again. op=list list=<i> from count: a "
+			"list's entries with their strings and numbers. op=plugins: _global.skse.plugins members and the game's own handlers for the menu. op=model from count: "
+			"categories, races, sliders (callback, value, range, open value, engine), function members. op=slider callback=<name> value=<n>: move a slider as the "
+			"editor does. op=choose list=<i> index=<n>: press a race or choice entry through onItemPress. op=category index=<n>: pick a rail entry. op=done: press "
+			"Done. op=presets: the preset folder and files. op=show / op=hide / op=switch: the editor window. op=reload: re-read the INI.\","
+			"\"inputSchema\":{\"type\":\"object\",\"properties\":{\"op\":{\"type\":\"string\"},\"list\":{\"type\":\"integer\"},\"index\":{\"type\":\"integer\"},"
+			"\"from\":{\"type\":\"integer\"},\"count\":{\"type\":\"integer\"},\"callback\":{\"type\":\"string\"},\"value\":{\"type\":\"number\"}},\"additionalProperties\":true},"
 			"\"readOnly\":false"
 			"}";
 
-		if (devBench->RegisterTool("likeness.control", descriptor, &ControlTool, nullptr))
+		if (devBench->RegisterTool(name::kDevBenchTool, descriptor, &ControlTool, nullptr))
 		{
-			logger::info("registered \"likeness.control\" with DevBench (build {})", devBench->GetBuildNumber());
+			logger::info("registered \"{}\" with DevBench (build {})", name::kDevBenchTool, devBench->GetBuildNumber());
 			registered = true;
 		}
-		else { logger::warn("DevBench refused \"likeness.control\""); }
+		else { logger::warn("DevBench refused \"{}\"", name::kDevBenchTool); }
 	}
 }

@@ -1,12 +1,12 @@
-# Likeness
+# RaceMenu Mirrorwright
 
 A character editor drawn over RaceMenu for Skyrim Special Edition / Anniversary Edition. RaceMenu stays installed and
 loaded underneath and does all the real work - every slider, preset, overlay and morph is still RaceMenu's - while
-Likeness draws its own editor over the RaceSex Menu through the Apocrypha Menu Framework. A key (F4) switches to
+the editor draws its own editor over the RaceSex Menu through the Apocrypha Menu Framework. A key (F4) switches to
 RaceMenu's own interface and back.
 
-Status: **Milestone 1** (foundation and discovery). The window opens over RaceMenu and shows what Likeness reads from
-RaceMenu's movie; editing (race grid, sliders, presets) is Milestone 2. Plan and spec:
+Status: **Milestones 1 and 2** built (untested in game): race grid, live sliders, presets, Done. What it reads from
+RaceMenu is chosen at run time; see PLAN.md 7c. Plan and spec:
 `D:\Claude output\4. plans\racemenu-rebuild\` (`SPEC.md`, `PLAN.md`).
 
 ## Requirements
@@ -19,7 +19,7 @@ SKSE64, Address Library for SKSE Plugins, RaceMenu, and Apocrypha Menu Framework
 
 ## Testing hooks
 
-DevBench tool `likeness.control` (ops: state, probe, list, plugins, show, hide, switch, reload). Log:
+DevBench tool `mirrorwright.control` (ops: state, probe, list, plugins, model, slider, choose, category, done, presets, show, hide, switch, reload). Log:
 `Documents\My Games\Skyrim Special Edition\SKSE\Likeness.log`.
 
 ## Building

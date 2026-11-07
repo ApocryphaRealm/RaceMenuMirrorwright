@@ -5,7 +5,9 @@
 #include "SKSEMenuFramework.h"
 
 #include "Bridge.h"
+#include "Name.h"
 #include "PreciseSlider.h"
+#include "Presets.h"
 #include "Settings.h"
 
 #include "utils/Logger.h"
@@ -14,18 +16,23 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
+#include <cstring>
 #include <format>
 #include <functional>
 #include <mutex>
+#include <set>
 #include <string>
+#include <unordered_map>
 
-// Milestone 1 of the editor: the window exists, opens over the RaceSex Menu, switches with the switch key, and shows
-// what the bridge discovered in RaceMenu's movie (a rail of the lists found, the entries of the chosen one). It edits
-// nothing yet - Milestone 2 adds the race grid, sliders and presets on top of the lists chosen from this view.
+// The editor (Milestone 2, the playable minimum, plus the comforts of Milestone 4 that cost little):
+//   left window  - search, changed count, the category rail, the race grid / sliders / other mods' choices, Undo / Redo /
+//                  Reset / Done (with confirmations);
+//   right window - presets (list, load, save, delete, each confirmed) and RaceMenu's light;
+//   the last rail entry, Discovery, keeps Milestone 1's raw view of what was read from RaceMenu, for the test run.
 //
-// Threads: RenderWindow / RenderSettings run on the render thread. They read the bridge's snapshot copy and plain
-// atomics only - no RE::UI, no BSFixedString, no form lookups (past mistake 2026-08-29). Anything that must touch the game
-// is handed to SKSE's task queue.
+// Threads: the render callbacks run on the render thread and read only the bridge's snapshot copy and atomics; every
+// change goes to the bridge (UI tasks) or the main thread (past mistake 2026-08-29).
 
 namespace editor
 {
@@ -36,16 +43,39 @@ namespace editor
 		std::atomic<std::int64_t> g_lastSwitchMs{ 0 };
 		std::atomic<std::uint32_t> g_switchCount{ 0 };
 		std::atomic<std::uint32_t> g_framesDrawn{ 0 };
-		std::atomic<int> g_selectedList{ 0 };
-		std::string g_lastWhy;                 // guarded by g_whyLock
+		std::atomic<int> g_category{ 0 };       // rail index
+		std::atomic<bool> g_finishRequested{ false };
+		std::string g_lastWhy;
 		std::mutex g_whyLock;
-		std::string g_settingsStatus;          // guarded by g_statusLock: written by main-thread tasks, read by the render thread
+		std::string g_settingsStatus;
 		std::mutex g_statusLock;
 
-		void SetStatus(const char* a_text)
+		// Render-thread state.
+		struct Change
+		{
+			std::string callback;
+			float before = 0.0F;
+			float after = 0.0F;
+			std::int64_t at = 0;
+		};
+		std::vector<Change> g_undo, g_redo;
+		char g_search[128] = {};
+		char g_presetName[128] = {};
+		std::string g_message;                  // the editor's status line
+		std::vector<presets::Preset> g_presets;
+		int g_selectedPreset = -1;
+		bool g_presetsDirty = true;
+		bool g_focusSearch = false;
+
+		std::int64_t NowMs()
+		{
+			return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+		}
+
+		void SetStatus(const std::string& a_text)
 		{
 			std::scoped_lock guard(g_statusLock);
-			g_settingsStatus = a_text ? a_text : "";
+			g_settingsStatus = a_text;
 		}
 
 		std::string GetStatus()
@@ -54,19 +84,35 @@ namespace editor
 			return g_settingsStatus;
 		}
 
-		std::int64_t NowMs()
-		{
-			return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-		}
-
 		void OnMainThread(std::function<void()> a_task)
 		{
 			if (auto* tasks = SKSE::GetTaskInterface()) { tasks->AddTask(std::move(a_task)); }
-			else { logger::error("no SKSE task interface; a settings action was dropped"); }
+			else { logger::error("no SKSE task interface; an action was dropped"); }
 		}
 
-		// The switch key as an ImGui key, for reading it inside the window. Function keys only; another scan code is still
-		// honoured by the game-input sink while the window is hidden, and logged once here.
+		// A translated string with "{name}" replaced by the display name (Name.h). Render thread only (the cache is not locked).
+		const char* NTR(const char* a_key, const char* a_english)
+		{
+			static std::unordered_map<std::string, std::pair<std::string, std::string>> cache;   // key -> (source, result)
+			const char* src = strings::TR(a_key, a_english);
+			auto& slot = cache[a_key];
+			if (slot.first != src)
+			{
+				slot.first = src;
+				slot.second = src;
+				for (std::size_t at; (at = slot.second.find("{name}")) != std::string::npos;) { slot.second.replace(at, 6, name::kDisplayName); }
+			}
+			return slot.second.c_str();
+		}
+
+		template <class F>
+		bool Optional(const char* a_export, F a_call)
+		{
+			if (!GetMenuFrameworkFunction<void*>(a_export)) { return false; }
+			a_call();
+			return true;
+		}
+
 		ImGuiMCP::ImGuiKey KeyFromScanCode(std::uint32_t a_code)
 		{
 			using namespace ImGuiMCP;
@@ -86,11 +132,6 @@ namespace editor
 			case 0x58: return ImGuiKey_F12;
 			default: break;
 			}
-			static std::atomic<std::uint32_t> warned{ 0xFFFFFFFF };
-			if (warned.exchange(a_code) != a_code && a_code != 0)
-			{
-				logger::warn("switch key 0x{:02X} is not a function key; inside the editor it is not read, use the button", a_code);
-			}
 			return ImGuiKey_None;
 		}
 
@@ -102,18 +143,19 @@ namespace editor
 				"igSetWindowFontScale", "igSelectable_Bool", "igTextUnformatted", "igTextV", "igTextDisabledV", "igTextWrappedV",
 				"igButton", "igSameLine", "igSpacing", "igSeparator", "igSeparatorText", "igGetFrameHeightWithSpacing",
 				"igIsKeyPressed_Bool", "igIsItemHovered", "igSetTooltipV", "igPushItemWidth", "igPopItemWidth",
-				// precise::SliderFloat (rule 68)
+				"igOpenPopup_Str", "igBeginPopupModal", "igEndPopup", "igCloseCurrentPopup", "igSetItemDefaultFocus",
+				"igInputTextWithHint", "igBeginDisabled", "igEndDisabled", "igGetContentRegionAvail", "igBeginTable", "igTableNextColumn",
+				"igEndTable",
 				"igSliderFloat", "igIsKeyDown_Nil", "igIsMouseDown_Nil",
-				// ImGuiMCP::Toggle (rule 32)
 				"igGetCursorScreenPos", "igGetWindowDrawList", "igGetFrameHeight", "igInvisibleButton", "igPushID_Str", "igPopID",
 				"ImDrawList_AddRectFilled", "ImDrawList_AddCircleFilled"
 			};
 			bool ok = true;
-			for (const char* name : required)
+			for (const char* fn : required)
 			{
-				if (!GetMenuFrameworkFunction<void*>(name))
+				if (!GetMenuFrameworkFunction<void*>(fn))
 				{
-					logger::warn("the menu framework does not export \"{}\"", name);
+					logger::warn("the menu framework does not export \"{}\"", fn);
 					ok = false;
 				}
 			}
@@ -123,17 +165,464 @@ namespace editor
 		void HelpMarker(const char* a_text)
 		{
 			ImGuiMCP::SameLine();
-			ImGuiMCP::TextDisabled("%s", strings::TR("LKN_HelpMark", "(?)"));
+			ImGuiMCP::TextDisabled("%s", strings::TR("RMM_HelpMark", "(?)"));
 			if (ImGuiMCP::IsItemHovered()) { ImGuiMCP::SetTooltip("%s", a_text); }
 		}
 
-		// The short name of a discovered list for the rail: its last two path parts ("racePanel.entryList").
 		std::string ShortName(const std::string& a_path)
 		{
 			const auto last = a_path.rfind('.');
 			if (last == std::string::npos || last == 0) { return a_path; }
 			const auto before = a_path.rfind('.', last - 1);
 			return before == std::string::npos ? a_path : a_path.substr(before + 1);
+		}
+
+		bool ContainsNoCase(const std::string& a_hay, const char* a_needle)
+		{
+			if (!*a_needle) { return true; }
+			const std::size_t n = std::strlen(a_needle);
+			if (n > a_hay.size()) { return false; }
+			for (std::size_t i = 0; i + n <= a_hay.size(); ++i)
+			{
+				if (_strnicmp(a_hay.c_str() + i, a_needle, n) == 0) { return true; }
+			}
+			return false;
+		}
+
+		const char* FormatFor(float a_step)
+		{
+			if (a_step >= 1.0F) { return "%.0f"; }
+			if (a_step >= 0.1F) { return "%.1f"; }
+			return "%.2f";
+		}
+
+		// ---- the rail ---------------------------------------------------------------------------------------------------
+		struct RailItem
+		{
+			enum class Kind { kRace, kSliders, kChoices, kDiscovery } kind;
+			std::string label;
+			std::uint32_t flag = 0;
+		};
+
+		std::vector<RailItem> BuildRail(const bridge::Snapshot& a_s)
+		{
+			std::vector<RailItem> rail;
+			const auto& m = a_s.model;
+			for (const auto& c : m.categories)
+			{
+				if (c.flag & bridge::kCategoryRace) { rail.push_back({ RailItem::Kind::kRace, c.label, c.flag }); }
+				else { rail.push_back({ RailItem::Kind::kSliders, c.label, c.flag }); }
+			}
+			// Another mod's choices filed in the race list (Apprentice: classes, traits) get their own rail entries right
+			// after Race, labelled from the category list when it names their flag.
+			std::set<std::uint32_t> others;
+			for (const auto& r : m.races)
+			{
+				if (r.other) { others.insert(r.flag); }
+			}
+			std::size_t at = 1;
+			for (std::size_t i = 0; i < rail.size(); ++i)
+			{
+				if (rail[i].kind == RailItem::Kind::kRace)
+				{
+					at = i + 1;
+					break;
+				}
+			}
+			for (const auto flag : others)
+			{
+				const bool named = std::any_of(rail.begin(), rail.end(), [flag](const RailItem& r) { return r.flag == flag; });
+				if (named)
+				{
+					for (auto& r : rail)
+					{
+						if (r.flag == flag) { r.kind = RailItem::Kind::kChoices; }
+					}
+					continue;
+				}
+				rail.insert(rail.begin() + static_cast<std::ptrdiff_t>(std::min(at, rail.size())), { RailItem::Kind::kChoices, std::format("Choices {}", flag), flag });
+				++at;
+			}
+			rail.push_back({ RailItem::Kind::kDiscovery, NTR("RMM_Discovery", "Discovery"), 0 });
+			return rail;
+		}
+
+		// ---- edits ------------------------------------------------------------------------------------------------------
+		void Apply(const std::string& a_callback, float a_before, float a_after, bool a_record)
+		{
+			bridge::SetSlider(a_callback, a_after);
+			if (!a_record) { return; }
+			const auto now = NowMs();
+			if (!g_undo.empty() && g_undo.back().callback == a_callback && now - g_undo.back().at < 600)
+			{
+				g_undo.back().after = a_after;   // one drag or one held nudge is one undo step
+				g_undo.back().at = now;
+			}
+			else { g_undo.push_back({ a_callback, a_before, a_after, now }); }
+			if (g_undo.size() > 500) { g_undo.erase(g_undo.begin()); }
+			g_redo.clear();
+		}
+
+		void Undo()
+		{
+			if (g_undo.empty()) { return; }
+			Change c = g_undo.back();
+			g_undo.pop_back();
+			bridge::SetSlider(c.callback, c.before);
+			g_redo.push_back(c);
+			logger::debug("undo {} -> {:.3f}", c.callback, c.before);
+		}
+
+		void Redo()
+		{
+			if (g_redo.empty()) { return; }
+			Change c = g_redo.back();
+			g_redo.pop_back();
+			bridge::SetSlider(c.callback, c.after);
+			c.at = 0;
+			g_undo.push_back(c);
+			logger::debug("redo {} -> {:.3f}", c.callback, c.after);
+		}
+
+		void SliderRow(const bridge::Slider& a_s)
+		{
+			ImGuiMCP::PushID(a_s.callback.c_str());
+			float v = a_s.value;
+			const bool changed = !std::isnan(a_s.openValue) && a_s.value != a_s.openValue;
+			const std::string label = (changed ? "* " : "") + a_s.label;
+			ImGuiMCP::TextUnformatted(label.c_str());
+			if (settings::showInternalNames) { ImGuiMCP::TextDisabled("%s", a_s.callback.c_str()); }
+			const float lo = settings::allowPastRange ? std::min(a_s.min, a_s.max * -2.0F) : a_s.min;
+			const float hi = settings::allowPastRange ? a_s.max * 2.0F : a_s.max;
+			ImGuiMCP::PushItemWidth(-1.0F);
+			if (precise::SliderFloat("##v", &v, lo, hi, FormatFor(a_s.step)) && v != a_s.value) { Apply(a_s.callback, a_s.value, v, true); }
+			ImGuiMCP::PopItemWidth();
+			if (changed && ImGuiMCP::IsItemHovered())
+			{
+				ImGuiMCP::SetTooltip("%s", std::format("{} {:.2f}", NTR("RMM_WasValue", "When the menu opened:"), a_s.openValue).c_str());
+			}
+			ImGuiMCP::PopID();
+		}
+
+		void RaceGrid(const bridge::Snapshot& a_s, bool a_others, std::uint32_t a_flag)
+		{
+			const float avail = ImGuiMCP::GetContentRegionAvail().x;
+			const int columns = std::max(1, static_cast<int>(avail / (150.0F * std::clamp(settings::scale, 0.5F, 2.0F))));
+			if (!ImGuiMCP::BeginTable("##grid", columns)) { return; }
+			for (const auto& r : a_s.model.races)
+			{
+				if (a_others ? (!r.other || r.flag != a_flag) : r.other) { continue; }
+				if (!ContainsNoCase(r.label, g_search)) { continue; }
+				ImGuiMCP::TableNextColumn();
+				ImGuiMCP::PushID(static_cast<int>(r.index));
+				if (ImGuiMCP::Button(r.label.c_str(), ImGuiMCP::ImVec2(-1.0F, 0.0F)))
+				{
+					bridge::ChooseEntry(r.list, r.index);
+					g_message = std::format("{} {}", NTR("RMM_Chose", "Chosen:"), r.label);
+				}
+				if (!r.description.empty() && ImGuiMCP::IsItemHovered()) { ImGuiMCP::SetTooltip("%s", r.description.c_str()); }
+				ImGuiMCP::PopID();
+			}
+			ImGuiMCP::EndTable();
+		}
+
+		void DiscoveryView(const bridge::Snapshot& a_s)
+		{
+			static int selected = 0;
+			ImGuiMCP::TextWrapped("%s", NTR("RMM_DiscoveryNote", "What {name} read from RaceMenu, for bug reports."));
+			ImGuiMCP::TextDisabled("%s", a_s.status.c_str());
+			if (ImGuiMCP::Button(NTR("RMM_Refresh", "Read RaceMenu again"))) { bridge::RequestProbe(); }
+			for (int i = 0; i < static_cast<int>(a_s.lists.size()); ++i)
+			{
+				const auto& l = a_s.lists[static_cast<std::size_t>(i)];
+				const std::string label = std::format("{} ({})##l{}", ShortName(l.path), l.size, i);
+				if (ImGuiMCP::Selectable(label.c_str(), i == selected)) { selected = i; }
+				if (ImGuiMCP::IsItemHovered()) { ImGuiMCP::SetTooltip("%s", l.path.c_str()); }
+			}
+			if (selected >= 0 && selected < static_cast<int>(a_s.lists.size()))
+			{
+				ImGuiMCP::Separator();
+				for (const auto& e : a_s.lists[static_cast<std::size_t>(selected)].entries)
+				{
+					ImGuiMCP::TextUnformatted(e.label.empty() ? "-" : e.label.c_str());
+					if (!e.numbers.empty() && ImGuiMCP::IsItemHovered()) { ImGuiMCP::SetTooltip("%s", e.numbers.c_str()); }
+				}
+			}
+		}
+
+		// ---- confirmations ------------------------------------------------------------------------------------------------
+		bool Confirm(const char* a_id, const char* a_text, const char* a_yes)
+		{
+			bool yes = false;
+			if (ImGuiMCP::BeginPopupModal(a_id, nullptr, ImGuiMCP::ImGuiWindowFlags_AlwaysAutoResize))
+			{
+				ImGuiMCP::TextUnformatted(a_text);
+				ImGuiMCP::Spacing();
+				if (ImGuiMCP::Button(a_yes))
+				{
+					yes = true;
+					ImGuiMCP::CloseCurrentPopup();
+				}
+				ImGuiMCP::SetItemDefaultFocus();   // from the pad, the confirming button already has the focus (SPEC 8)
+				ImGuiMCP::SameLine();
+				if (ImGuiMCP::Button(NTR("RMM_Cancel", "Cancel")) || ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_Escape, false)) { ImGuiMCP::CloseCurrentPopup(); }
+				ImGuiMCP::EndPopup();
+			}
+			return yes;
+		}
+
+		void DoFinish()
+		{
+			logger::info("Done confirmed");
+			if (!bridge::Finish())
+			{
+				g_message = NTR("RMM_NoDone", "Finish from RaceMenu's own interface: switched to it.");
+				SetShown(false, "Done without a known Done function");
+			}
+		}
+
+		// ---- the windows --------------------------------------------------------------------------------------------------
+		void EditorWindow(const bridge::Snapshot& a_s, float a_width, float a_height)
+		{
+			ImGuiMCP::SetNextWindowPos(ImGuiMCP::ImVec2(0.0F, 0.0F), ImGuiMCP::ImGuiCond_Always);
+			ImGuiMCP::SetNextWindowSize(ImGuiMCP::ImVec2(a_width, a_height), ImGuiMCP::ImGuiCond_Always);
+			const auto flags = ImGuiMCP::ImGuiWindowFlags_NoCollapse | ImGuiMCP::ImGuiWindowFlags_NoMove | ImGuiMCP::ImGuiWindowFlags_NoResize |
+			                   ImGuiMCP::ImGuiWindowFlags_NoSavedSettings;
+			const std::string title = std::string(NTR("RMM_Title", "{name}")) + "###MirrorwrightEditor";
+			if (ImGuiMCP::Begin(title.c_str(), nullptr, flags))
+			{
+				ImGuiMCP::SetWindowFontScale(std::clamp(settings::scale, 0.5F, 2.0F));
+				auto* io = ImGuiMCP::GetIO();
+				const bool ctrl = io && io->KeyCtrl;
+				if (const auto key = KeyFromScanCode(settings::switchKey); key != ImGuiMCP::ImGuiKey_None && ImGuiMCP::IsKeyPressed(key, false)) { OnSwitchKey("editor window"); }
+				if (ctrl && ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_Z, false)) { Undo(); }
+				if (ctrl && ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_Y, false)) { Redo(); }
+				if (ctrl && ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_F, false)) { g_focusSearch = true; }
+
+				// Search and the changed count.
+				if (g_focusSearch)
+				{
+					Optional("igSetKeyboardFocusHere", []() { ImGuiMCP::SetKeyboardFocusHere(0); });
+					g_focusSearch = false;
+				}
+				ImGuiMCP::PushItemWidth(a_width * 0.55F);
+				ImGuiMCP::InputTextWithHint("##search", NTR("RMM_SearchHint", "Search every slider (Ctrl+F)"), g_search, sizeof(g_search));
+				ImGuiMCP::PopItemWidth();
+				const auto changed = std::count_if(a_s.model.sliders.begin(), a_s.model.sliders.end(),
+					[](const bridge::Slider& s) { return !std::isnan(s.openValue) && s.value != s.openValue; });
+				ImGuiMCP::SameLine();
+				ImGuiMCP::TextDisabled("%s", std::format("{} {}", changed, NTR("RMM_Changed", "changed")).c_str());
+				ImGuiMCP::SameLine();
+				if (ImGuiMCP::Button(NTR("RMM_ToRaceMenu", "RaceMenu's interface"))) { SetShown(false, "button"); }
+				if (ImGuiMCP::IsItemHovered()) { ImGuiMCP::SetTooltip("%s", NTR("RMM_HelpToRaceMenu", "Hides {name} and leaves RaceMenu's own interface. The switch key (F4) brings {name} back.")); }
+				ImGuiMCP::Separator();
+
+				const float footer = ImGuiMCP::GetFrameHeightWithSpacing() * 2.2F;
+				const auto rail = BuildRail(a_s);
+				int category = std::clamp(g_category.load(), 0, static_cast<int>(rail.size()) - 1);
+				const bool searching = g_search[0] != '\0';
+
+				if (ImGuiMCP::BeginChild("##rail", ImGuiMCP::ImVec2(a_width * 0.30F, -footer), ImGuiMCP::ImGuiChildFlags_Border))
+				{
+					for (int i = 0; i < static_cast<int>(rail.size()); ++i)
+					{
+						const std::string label = rail[static_cast<std::size_t>(i)].label + "##rail" + std::to_string(i);
+						if (ImGuiMCP::Selectable(label.c_str(), !searching && i == category))
+						{
+							category = i;
+							g_category = i;
+							g_search[0] = '\0';
+						}
+					}
+				}
+				ImGuiMCP::EndChild();
+				ImGuiMCP::SameLine();
+				if (ImGuiMCP::BeginChild("##content", ImGuiMCP::ImVec2(0.0F, -footer), ImGuiMCP::ImGuiChildFlags_Border))
+				{
+					if (!a_s.probed) { ImGuiMCP::TextWrapped("%s", NTR("RMM_Reading", "Reading RaceMenu...")); }
+					else if (searching)
+					{
+						for (const auto& c : a_s.model.categories)
+						{
+							bool header = false;
+							for (const auto& s : a_s.model.sliders)
+							{
+								if (!(s.flag & c.flag) || !(ContainsNoCase(s.label, g_search) || (settings::showInternalNames && ContainsNoCase(s.callback, g_search)))) { continue; }
+								if (!header)
+								{
+									ImGuiMCP::SeparatorText(c.label.c_str());
+									header = true;
+								}
+								SliderRow(s);
+							}
+						}
+						RaceGrid(a_s, false, 0);
+					}
+					else
+					{
+						const auto& item = rail[static_cast<std::size_t>(category)];
+						switch (item.kind)
+						{
+						case RailItem::Kind::kRace:
+							if (a_s.model.races.empty()) { ImGuiMCP::TextWrapped("%s", NTR("RMM_NoRaces", "No race list was found. Send the log.")); }
+							RaceGrid(a_s, false, 0);
+							break;
+						case RailItem::Kind::kChoices:
+							RaceGrid(a_s, true, item.flag);
+							break;
+						case RailItem::Kind::kDiscovery:
+							DiscoveryView(a_s);
+							break;
+						case RailItem::Kind::kSliders:
+							{
+								bool any = false;
+								for (const auto& s : a_s.model.sliders)
+								{
+									if (s.flag & item.flag)
+									{
+										SliderRow(s);
+										any = true;
+									}
+								}
+								if (!any) { ImGuiMCP::TextDisabled("%s", NTR("RMM_Empty", "Nothing here for this character.")); }
+							}
+							break;
+						}
+					}
+				}
+				ImGuiMCP::EndChild();
+
+				// Footer: Undo, Redo, Reset, Done.
+				ImGuiMCP::BeginDisabled(g_undo.empty());
+				if (ImGuiMCP::Button(NTR("RMM_Undo", "Undo"))) { Undo(); }
+				ImGuiMCP::EndDisabled();
+				ImGuiMCP::SameLine();
+				ImGuiMCP::BeginDisabled(g_redo.empty());
+				if (ImGuiMCP::Button(NTR("RMM_Redo", "Redo"))) { Redo(); }
+				ImGuiMCP::EndDisabled();
+				ImGuiMCP::SameLine();
+				ImGuiMCP::BeginDisabled(changed == 0);
+				if (ImGuiMCP::Button(NTR("RMM_Reset", "Reset"))) { ImGuiMCP::OpenPopup("##confirmReset"); }
+				ImGuiMCP::EndDisabled();
+				ImGuiMCP::SameLine();
+				if (ImGuiMCP::Button(NTR("RMM_Done", "Done")) || g_finishRequested.exchange(false))
+				{
+					if (settings::askBeforeDone) { ImGuiMCP::OpenPopup("##confirmDone"); }
+					else { DoFinish(); }
+				}
+				if (!g_message.empty()) { ImGuiMCP::TextDisabled("%s", g_message.c_str()); }
+
+				if (Confirm("##confirmReset", NTR("RMM_AskReset", "Put every slider back to its value when the menu opened?"), NTR("RMM_Reset", "Reset")))
+				{
+					for (const auto& s : a_s.model.sliders)
+					{
+						if (!std::isnan(s.openValue) && s.value != s.openValue) { Apply(s.callback, s.value, s.openValue, false); }
+					}
+					g_undo.clear();
+					g_redo.clear();
+					g_message = NTR("RMM_ResetDone", "Every slider is back to its value when the menu opened.");
+				}
+				if (Confirm("##confirmDone", NTR("RMM_AskDone", "Finish character creation?"), NTR("RMM_Finish", "Finish"))) { DoFinish(); }
+			}
+			ImGuiMCP::End();
+		}
+
+		void ScenePanel(float a_x, float a_width, float a_height)
+		{
+			ImGuiMCP::SetNextWindowPos(ImGuiMCP::ImVec2(a_x, 0.0F), ImGuiMCP::ImGuiCond_Always);
+			ImGuiMCP::SetNextWindowSize(ImGuiMCP::ImVec2(a_width, a_height), ImGuiMCP::ImGuiCond_Always);
+			const auto flags = ImGuiMCP::ImGuiWindowFlags_NoCollapse | ImGuiMCP::ImGuiWindowFlags_NoMove | ImGuiMCP::ImGuiWindowFlags_NoResize |
+			                   ImGuiMCP::ImGuiWindowFlags_NoSavedSettings;
+			const std::string title = std::string(NTR("RMM_Scene", "Scene and presets")) + "###MirrorwrightScene";
+			if (ImGuiMCP::Begin(title.c_str(), nullptr, flags))
+			{
+				ImGuiMCP::SetWindowFontScale(std::clamp(settings::scale, 0.5F, 2.0F));
+				if (ImGuiMCP::Button(NTR("RMM_Light", "Light")))
+				{
+					// RaceMenu's documented RSM_ToggleLight event (RaceMenu.psc OnToggleLight).
+					OnMainThread([]() {
+						if (auto* source = SKSE::GetModCallbackEventSource())
+						{
+							SKSE::ModCallbackEvent event{ "RSM_ToggleLight", "", 0.0F, nullptr };
+							source->SendEvent(&event);
+							logger::info("light: RSM_ToggleLight sent");
+						}
+					});
+				}
+				ImGuiMCP::SeparatorText(NTR("RMM_Presets", "Presets"));
+				if (g_presetsDirty)
+				{
+					g_presets = presets::List();
+					g_presetsDirty = false;
+				}
+				const float listHeight = a_height * 0.55F;
+				if (ImGuiMCP::BeginChild("##presets", ImGuiMCP::ImVec2(0.0F, listHeight), ImGuiMCP::ImGuiChildFlags_Border))
+				{
+					if (g_presets.empty()) { ImGuiMCP::TextDisabled("%s", NTR("RMM_NoPresets", "No presets saved yet.")); }
+					for (int i = 0; i < static_cast<int>(g_presets.size()); ++i)
+					{
+						const auto& p = g_presets[static_cast<std::size_t>(i)];
+						ImGuiMCP::BeginDisabled(!p.loadable);
+						if (ImGuiMCP::Selectable((p.name + "##p" + std::to_string(i)).c_str(), i == g_selectedPreset))
+						{
+							g_selectedPreset = i;
+							std::snprintf(g_presetName, sizeof(g_presetName), "%s", p.name.c_str());
+						}
+						ImGuiMCP::EndDisabled();
+						if (!p.loadable && ImGuiMCP::IsItemHovered())
+						{
+							ImGuiMCP::SetTooltip("%s", NTR("RMM_PresetUnreadable", "RaceMenu cannot open this name on this Windows (its letters are outside the system code page)."));
+						}
+					}
+				}
+				ImGuiMCP::EndChild();
+				ImGuiMCP::PushItemWidth(-1.0F);
+				ImGuiMCP::InputTextWithHint("##presetName", NTR("RMM_PresetName", "Preset name"), g_presetName, sizeof(g_presetName));
+				ImGuiMCP::PopItemWidth();
+
+				const bool haveSel = g_selectedPreset >= 0 && g_selectedPreset < static_cast<int>(g_presets.size()) && g_presets[static_cast<std::size_t>(g_selectedPreset)].loadable;
+				ImGuiMCP::BeginDisabled(!haveSel);
+				if (ImGuiMCP::Button(NTR("RMM_Load", "Load"))) { ImGuiMCP::OpenPopup("##confirmLoad"); }
+				ImGuiMCP::EndDisabled();
+				ImGuiMCP::SameLine();
+				ImGuiMCP::BeginDisabled(g_presetName[0] == '\0');
+				if (ImGuiMCP::Button(NTR("RMM_SavePreset", "Save")))
+				{
+					if (presets::Exists(g_presetName)) { ImGuiMCP::OpenPopup("##confirmOverwrite"); }
+					else
+					{
+						g_message = presets::Save(g_presetName) ? NTR("RMM_PresetSaved", "Preset saved.") : NTR("RMM_PresetBadName", "That name cannot be used for a preset on this Windows.");
+						g_presetsDirty = true;
+					}
+				}
+				ImGuiMCP::EndDisabled();
+				ImGuiMCP::SameLine();
+				ImGuiMCP::BeginDisabled(g_selectedPreset < 0 || g_selectedPreset >= static_cast<int>(g_presets.size()));
+				if (ImGuiMCP::Button(NTR("RMM_Delete", "Delete"))) { ImGuiMCP::OpenPopup("##confirmDelete"); }
+				ImGuiMCP::EndDisabled();
+				ImGuiMCP::TextWrapped("%s", g_message.c_str());
+
+				if (Confirm("##confirmLoad", NTR("RMM_AskLoad", "Load this preset? Unsaved changes are replaced."), NTR("RMM_Load", "Load")) && haveSel)
+				{
+					g_message = presets::Load(g_presets[static_cast<std::size_t>(g_selectedPreset)]) ? NTR("RMM_PresetLoading", "Loading the preset...") : NTR("RMM_PresetFailed", "The preset could not be loaded. See the log.");
+					g_undo.clear();
+					g_redo.clear();
+				}
+				if (Confirm("##confirmOverwrite", NTR("RMM_AskOverwrite", "A preset with this name exists. Replace it?"), NTR("RMM_Replace", "Replace")))
+				{
+					g_message = presets::Save(g_presetName) ? NTR("RMM_PresetSaved", "Preset saved.") : NTR("RMM_PresetBadName", "That name cannot be used for a preset on this Windows.");
+					g_presetsDirty = true;
+				}
+				if (Confirm("##confirmDelete", NTR("RMM_AskDelete", "Delete this preset file? This cannot be undone."), NTR("RMM_Delete", "Delete")) &&
+					g_selectedPreset >= 0 && g_selectedPreset < static_cast<int>(g_presets.size()))
+				{
+					g_message = presets::Remove(g_presets[static_cast<std::size_t>(g_selectedPreset)]) ? NTR("RMM_PresetDeleted", "Preset deleted.") : NTR("RMM_PresetDeleteFailed", "The preset could not be deleted. See the log.");
+					g_selectedPreset = -1;
+					g_presetsDirty = true;
+				}
+				if (ImGuiMCP::Button(NTR("RMM_RefreshPresets", "Refresh the list"))) { g_presetsDirty = true; }
+			}
+			ImGuiMCP::End();
 		}
 
 		void __stdcall RenderWindow()
@@ -150,153 +639,82 @@ namespace editor
 			const float displayW = io ? io->DisplaySize.x : 1920.0F;
 			const float displayH = io ? io->DisplaySize.y : 1080.0F;
 			const float width = std::clamp(settings::panelWidth, 0.2F, 0.5F) * displayW;
-
-			ImGuiMCP::SetNextWindowPos(ImGuiMCP::ImVec2(0.0F, 0.0F), ImGuiMCP::ImGuiCond_Always);
-			ImGuiMCP::SetNextWindowSize(ImGuiMCP::ImVec2(width, displayH), ImGuiMCP::ImGuiCond_Always);
-			const auto flags = ImGuiMCP::ImGuiWindowFlags_NoCollapse | ImGuiMCP::ImGuiWindowFlags_NoMove | ImGuiMCP::ImGuiWindowFlags_NoResize |
-			                   ImGuiMCP::ImGuiWindowFlags_NoSavedSettings;
-			const std::string title = std::string(strings::TR("LKN_Title", "Likeness")) + "###LikenessEditor";
-			if (ImGuiMCP::Begin(title.c_str(), nullptr, flags))
+			EditorWindow(snap, width, displayH);
+			if (settings::scenePanel)
 			{
-				ImGuiMCP::SetWindowFontScale(std::clamp(settings::scale, 0.5F, 2.0F));
-
-				// The switch key, read here while the window has the keys.
-				if (const auto key = KeyFromScanCode(settings::switchKey); key != ImGuiMCP::ImGuiKey_None && ImGuiMCP::IsKeyPressed(key, false))
-				{
-					OnSwitchKey("editor window");
-				}
-
-				ImGuiMCP::TextWrapped("%s", strings::TR("LKN_Milestone", "Discovery view: what Likeness reads from RaceMenu. Editing comes in the next build."));
-				ImGuiMCP::TextDisabled("%s", snap.status.c_str());
-
-				if (ImGuiMCP::Button(strings::TR("LKN_Refresh", "Read RaceMenu again")))
-				{
-					bridge::RequestProbe();
-				}
-				HelpMarker(strings::TR("LKN_HelpRefresh", "Reads RaceMenu's lists again, for example after another mod added sliders."));
-				ImGuiMCP::SameLine();
-				if (ImGuiMCP::Button(strings::TR("LKN_ToRaceMenu", "RaceMenu's interface")))
-				{
-					SetShown(false, "button");
-				}
-				HelpMarker(strings::TR("LKN_HelpToRaceMenu", "Hides Likeness and leaves RaceMenu's own interface. The switch key (F4) brings Likeness back."));
-				ImGuiMCP::Separator();
-
-				const float footer = ImGuiMCP::GetFrameHeightWithSpacing() * 2.0F;
-				const float railWidth = width * 0.38F;
-
-				if (snap.lists.empty())
-				{
-					ImGuiMCP::TextWrapped("%s", strings::TR("LKN_NothingYet", "No lists found in RaceMenu yet. If this stays, press Read RaceMenu again and send the log."));
-				}
-				else
-				{
-					int selected = std::clamp(g_selectedList.load(), 0, static_cast<int>(snap.lists.size()) - 1);
-					if (ImGuiMCP::BeginChild("##rail", ImGuiMCP::ImVec2(railWidth, -footer), ImGuiMCP::ImGuiChildFlags_Border))
-					{
-						for (int i = 0; i < static_cast<int>(snap.lists.size()); ++i)
-						{
-							const auto& list = snap.lists[static_cast<std::size_t>(i)];
-							const std::string label = std::format("{} ({})##list{}", ShortName(list.path), list.size, i);
-							if (ImGuiMCP::Selectable(label.c_str(), i == selected))
-							{
-								selected = i;
-								g_selectedList = i;
-							}
-							if (ImGuiMCP::IsItemHovered()) { ImGuiMCP::SetTooltip("%s", list.path.c_str()); }
-						}
-					}
-					ImGuiMCP::EndChild();
-					ImGuiMCP::SameLine();
-					if (ImGuiMCP::BeginChild("##content", ImGuiMCP::ImVec2(0.0F, -footer), ImGuiMCP::ImGuiChildFlags_Border))
-					{
-						const auto& list = snap.lists[static_cast<std::size_t>(selected)];
-						ImGuiMCP::TextDisabled("%s", list.path.c_str());
-						for (const auto& entry : list.entries)
-						{
-							ImGuiMCP::TextUnformatted(entry.label.empty() ? "-" : entry.label.c_str());
-							if (settings::showInternalNames && !entry.numbers.empty()) { ImGuiMCP::TextDisabled("%s", entry.numbers.c_str()); }
-							else if (!entry.numbers.empty() && ImGuiMCP::IsItemHovered()) { ImGuiMCP::SetTooltip("%s", entry.numbers.c_str()); }
-						}
-						if (list.size > list.entries.size())
-						{
-							ImGuiMCP::TextDisabled("%s", std::format("... {} more", list.size - list.entries.size()).c_str());
-						}
-					}
-					ImGuiMCP::EndChild();
-				}
-				ImGuiMCP::Separator();
-				ImGuiMCP::TextDisabled("%s", strings::TR("LKN_Footer", "RaceMenu does all the real work underneath."));
+				const float sceneW = displayW * 0.20F;
+				ScenePanel(displayW - sceneW, sceneW, displayH * 0.75F);
 			}
-			ImGuiMCP::End();
 		}
 
 		void FloatRow(const char* a_key, const char* a_label, float* a_value, float a_min, float a_max, const char* a_helpKey, const char* a_help)
 		{
-			precise::SliderFloat(strings::TR(a_key, a_label), a_value, a_min, a_max, "%.2f");
-			HelpMarker(strings::TR(a_helpKey, a_help));
+			precise::SliderFloat(NTR(a_key, a_label), a_value, a_min, a_max, "%.2f");
+			HelpMarker(NTR(a_helpKey, a_help));
 		}
 
 		void ToggleRow(const char* a_key, const char* a_label, bool* a_value, const char* a_helpKey, const char* a_help)
 		{
-			ImGuiMCP::Toggle(strings::TR(a_key, a_label), a_value);
-			HelpMarker(strings::TR(a_helpKey, a_help));
+			ImGuiMCP::Toggle(NTR(a_key, a_label), a_value);
+			HelpMarker(NTR(a_helpKey, a_help));
 		}
 
 		void __stdcall RenderSettings()
 		{
 			strings::Tick();
-			ImGuiMCP::TextWrapped("%s", strings::TR("LKN_SettingsIntro", "Changes apply as soon as you make them. Press Save to keep them for the next time you play."));
+			ImGuiMCP::TextWrapped("%s", NTR("RMM_SettingsIntro", "Changes apply as soon as you make them. Press Save to keep them for the next time you play."));
 			ImGuiMCP::PushItemWidth(260.0F);
 
-			ImGuiMCP::SeparatorText(strings::TR("LKN_SecGeneral", "General"));
-			ToggleRow("LKN_Enabled", "Draw Likeness over RaceMenu", &settings::enabled, "LKN_HelpEnabled", "Off: RaceMenu shows only its own interface.");
-			ToggleRow("LKN_StartInEditor", "Start in Likeness", &settings::startInEditor, "LKN_HelpStartInEditor",
-				"Off: RaceMenu opens in its own interface and the switch key brings Likeness up.");
+			ImGuiMCP::SeparatorText(NTR("RMM_SecGeneral", "General"));
+			ToggleRow("RMM_Enabled", "Draw {name} over RaceMenu", &settings::enabled, "RMM_HelpEnabled", "Off: RaceMenu shows only its own interface.");
+			ToggleRow("RMM_StartInEditor", "Start in {name}", &settings::startInEditor, "RMM_HelpStartInEditor",
+				"Off: RaceMenu opens in its own interface and the switch key brings {name} up.");
+			ToggleRow("RMM_HidePanels", "Hide RaceMenu's own panels", &settings::hideRaceMenuPanels, "RMM_HelpHidePanels",
+				"While {name} is up, RaceMenu's own panels are hidden so only the character shows beside it.");
 
-			ImGuiMCP::SeparatorText(strings::TR("LKN_SecLayout", "Layout"));
-			FloatRow("LKN_Scale", "Size", &settings::scale, 0.5F, 2.0F, "LKN_HelpScale", "Size of the editor's text and controls.");
-			FloatRow("LKN_PanelWidth", "Panel width", &settings::panelWidth, 0.2F, 0.5F, "LKN_HelpPanelWidth", "Share of the screen width the editor takes.");
-			ToggleRow("LKN_ScenePanel", "Scene and presets panel", &settings::scenePanel, "LKN_HelpScenePanel", "The panel on the right with the camera, light and presets.");
+			ImGuiMCP::SeparatorText(NTR("RMM_SecLayout", "Layout"));
+			FloatRow("RMM_Scale", "Size", &settings::scale, 0.5F, 2.0F, "RMM_HelpScale", "Size of the editor's text and controls.");
+			FloatRow("RMM_PanelWidth", "Panel width", &settings::panelWidth, 0.2F, 0.5F, "RMM_HelpPanelWidth", "Share of the screen width the editor takes.");
+			ToggleRow("RMM_ScenePanel", "Scene and presets panel", &settings::scenePanel, "RMM_HelpScenePanel", "The panel on the right with the light and presets.");
 
-			ImGuiMCP::SeparatorText(strings::TR("LKN_SecEditor", "Editor"));
-			ToggleRow("LKN_AskBeforeDone", "Ask before finishing", &settings::askBeforeDone, "LKN_HelpAskBeforeDone", "Done asks before it finishes the character.");
-			ToggleRow("LKN_GroupHeaders", "Group headers", &settings::groupHeaders, "LKN_HelpGroupHeaders", "Splits long categories into coloured groups.");
-			ToggleRow("LKN_HideOtherBody", "Hide the other body's sliders", &settings::hideOtherBodySliders, "LKN_HelpHideOtherBody",
+			ImGuiMCP::SeparatorText(NTR("RMM_SecEditor", "Editor"));
+			ToggleRow("RMM_AskBeforeDone", "Ask before finishing", &settings::askBeforeDone, "RMM_HelpAskBeforeDone", "Done asks before it finishes the character.");
+			ToggleRow("RMM_GroupHeaders", "Group headers", &settings::groupHeaders, "RMM_HelpGroupHeaders", "Splits long categories into coloured groups.");
+			ToggleRow("RMM_HideOtherBody", "Hide the other body's sliders", &settings::hideOtherBodySliders, "RMM_HelpHideOtherBody",
 				"Hides body sliders that clearly belong to the other body type.");
-			ToggleRow("LKN_AllowPastRange", "Allow typed values past the range", &settings::allowPastRange, "LKN_HelpAllowPastRange",
-				"A typed value may go past the range a custom body morph registered.");
-			ToggleRow("LKN_InternalNames", "Show internal names", &settings::showInternalNames, "LKN_HelpInternalNames", "Shows each slider's internal name and numbers, for mod authors.");
+			ToggleRow("RMM_AllowPastRange", "Allow values past the range", &settings::allowPastRange, "RMM_HelpAllowPastRange",
+				"Sliders reach past the range a custom body morph registered.");
+			ToggleRow("RMM_InternalNames", "Show internal names", &settings::showInternalNames, "RMM_HelpInternalNames", "Shows each slider's internal name, for mod authors.");
 
-			ImGuiMCP::SeparatorText(strings::TR("LKN_SecCamera", "Camera"));
-			FloatRow("LKN_TurnSpeed", "Turn speed", &settings::turnSpeed, 0.05F, 2.0F, "LKN_HelpTurnSpeed", "Degrees the character turns per pixel of drag.");
+			ImGuiMCP::SeparatorText(NTR("RMM_SecCamera", "Camera"));
+			FloatRow("RMM_TurnSpeed", "Turn speed", &settings::turnSpeed, 0.05F, 2.0F, "RMM_HelpTurnSpeed", "Degrees the character turns per pixel of drag.");
 
-			ImGuiMCP::SeparatorText(strings::TR("LKN_SecControls", "Controls"));
-			ImGuiMCP::Text("%s: 0x%02X", strings::TR("LKN_SwitchKey", "Switch key (scan code)"), settings::switchKey);
-			HelpMarker(strings::TR("LKN_HelpSwitchKey", "Switches between Likeness and RaceMenu's own interface while RaceMenu is open. F4 is 0x3E. Set it in the INI."));
+			ImGuiMCP::SeparatorText(NTR("RMM_SecControls", "Controls"));
+			ImGuiMCP::Text("%s: 0x%02X", NTR("RMM_SwitchKey", "Switch key (scan code)"), settings::switchKey);
+			HelpMarker(NTR("RMM_HelpSwitchKey", "Switches between {name} and RaceMenu's own interface while RaceMenu is open. F4 is 0x3E. Set it in the INI."));
 
 			ImGuiMCP::PopItemWidth();
 			ImGuiMCP::SeparatorText("");
 
-			if (ImGuiMCP::Button(strings::TR("LKN_Save", "Save")))
+			if (ImGuiMCP::Button(NTR("RMM_Save", "Save")))
 			{
-				SetStatus(strings::TR("LKN_Saving", "Saving..."));
-				OnMainThread([]() {
-					SetStatus(settings::Save() ? strings::TR("LKN_Saved", "Settings saved.") : strings::TR("LKN_SaveFailed", "Could not write the INI. See the log."));
-				});
+				SetStatus(NTR("RMM_Saving", "Saving..."));
+				const std::string ok = NTR("RMM_Saved", "Settings saved.");
+				const std::string bad = NTR("RMM_SaveFailed", "Could not write the INI. See the log.");
+				OnMainThread([ok, bad]() { SetStatus(settings::Save() ? ok : bad); });
 			}
 			ImGuiMCP::SameLine();
-			if (ImGuiMCP::Button(strings::TR("LKN_Reload", "Reload from INI")))
+			if (ImGuiMCP::Button(NTR("RMM_Reload", "Reload from INI")))
 			{
-				OnMainThread([]() {
-					SetStatus(settings::Reload() ? strings::TR("LKN_Reloaded", "Settings reloaded from the INI.") : strings::TR("LKN_ReloadFailed", "Could not read the INI. See the log."));
-				});
+				const std::string ok = NTR("RMM_Reloaded", "Settings reloaded from the INI.");
+				const std::string bad = NTR("RMM_ReloadFailed", "Could not read the INI. See the log.");
+				OnMainThread([ok, bad]() { SetStatus(settings::Reload() ? ok : bad); });
 			}
 			ImGuiMCP::SameLine();
-			if (ImGuiMCP::Button(strings::TR("LKN_Restore", "Restore defaults")))
+			if (ImGuiMCP::Button(NTR("RMM_Restore", "Restore defaults")))
 			{
 				OnMainThread([]() { settings::RestoreDefaults(); });
-				SetStatus(strings::TR("LKN_Restored", "Defaults restored. Press Save to keep them."));
+				SetStatus(NTR("RMM_Restored", "Defaults restored. Press Save to keep them."));
 			}
 			if (const std::string status = GetStatus(); !status.empty()) { ImGuiMCP::TextWrapped("%s", status.c_str()); }
 			ImGuiMCP::TextDisabled("%s", settings::GetIniPath().c_str());
@@ -307,15 +725,15 @@ namespace editor
 	{
 		if (!SKSEMenuFramework::IsInstalled())
 		{
-			logger::warn("no menu framework (Apocrypha Menu Framework or SKSE Menu Framework 3) is installed; Likeness stands down and RaceMenu keeps its own interface");
+			logger::warn("no menu framework (Apocrypha Menu Framework or SKSE Menu Framework 3) is installed; {} stands down and RaceMenu keeps its own interface", name::kDisplayName);
 			return;
 		}
 		if (!HasRequiredExports())
 		{
-			logger::warn("the installed menu framework lacks exports Likeness draws with (listed above); Likeness stands down");
+			logger::warn("the installed menu framework lacks exports the editor draws with (listed above); {} stands down", name::kDisplayName);
 			return;
 		}
-		SKSEMenuFramework::SetSection("Likeness");
+		SKSEMenuFramework::SetSection(name::kSection);
 		SKSEMenuFramework::AddSectionItem("Settings", RenderSettings);
 		g_window = SKSEMenuFramework::AddWindow(RenderWindow, true);
 		if (!g_window)
@@ -349,7 +767,11 @@ namespace editor
 			std::scoped_lock guard(g_whyLock);
 			g_lastWhy = a_why ? a_why : "?";
 		}
-		if (was != a_shown) { logger::info("editor {} ({})", a_shown ? "shown" : "hidden", a_why ? a_why : "?"); }
+		if (was != a_shown)
+		{
+			logger::info("editor {} ({})", a_shown ? "shown" : "hidden", a_why ? a_why : "?");
+			if (bridge::IsRaceMenuOpen() && settings::hideRaceMenuPanels) { bridge::SetPanelsHidden(a_shown); }
+		}
 	}
 
 	void OnRaceMenuOpened()
@@ -368,7 +790,6 @@ namespace editor
 
 	void OnSwitchKey(const char* a_source)
 	{
-		// One press can reach both the game sink and the window during the frame the window changes state; take one.
 		const auto now = NowMs();
 		if (now - g_lastSwitchMs.load() < 300)
 		{
@@ -385,6 +806,10 @@ namespace editor
 		SetShown(!IsShown(), a_source);
 	}
 
+	void RequestFinish() { g_finishRequested = true; }
+
+	void SelectCategory(int a_index) { g_category = a_index; }
+
 	std::string StateJson()
 	{
 		std::string why;
@@ -392,8 +817,8 @@ namespace editor
 			std::scoped_lock guard(g_whyLock);
 			why = g_lastWhy;
 		}
-		return std::format(R"({{"available":{},"shown":{},"lastWhy":"{}","switches":{},"framesDrawn":{},"selectedList":{},"enabled":{},"startInEditor":{},"switchKey":{}}})",
-			g_available.load(), IsShown(), bridge::Escape(why), g_switchCount.load(), g_framesDrawn.load(), g_selectedList.load(), settings::enabled, settings::startInEditor,
+		return std::format(R"({{"available":{},"shown":{},"lastWhy":"{}","switches":{},"framesDrawn":{},"category":{},"enabled":{},"startInEditor":{},"switchKey":{}}})",
+			g_available.load(), IsShown(), bridge::Escape(why), g_switchCount.load(), g_framesDrawn.load(), g_category.load(), settings::enabled, settings::startInEditor,
 			settings::switchKey);
 	}
 }

@@ -21,5 +21,9 @@ namespace editor
 	// The switch key from the game's input (used while the window is hidden; the window reads it itself while shown).
 	void OnSwitchKey(const char* a_source);
 
+	// DevBench: press Done (the confirmation opens as from the button) and pick a rail entry.
+	void RequestFinish();
+	void SelectCategory(int a_index);
+
 	std::string StateJson();
 }
