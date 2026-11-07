@@ -47,7 +47,7 @@ namespace settings
 				{ "General", "bEnabled", &enabled, true },
 				{ "General", "bStartInEditor", &startInEditor, true },
 				{ "General", "bHideRaceMenuPanels", &hideRaceMenuPanels, true },
-				{ "Advanced", "bEngineSliderCalls", &engineSliderCalls, false },
+				{ "Advanced", "bEngineSliderCalls", &engineSliderCalls, true },
 				{ "Layout", "bScenePanel", &scenePanel, true },
 				{ "Editor", "bAskBeforeDone", &askBeforeDone, true },
 				{ "Editor", "bGroupHeaders", &groupHeaders, true },

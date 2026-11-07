@@ -24,6 +24,8 @@ namespace editor
 	// DevBench: press Done (the confirmation opens as from the button) and pick a rail entry.
 	void RequestFinish();
 	void SelectCategory(int a_index);
+	void SelectCategoryByName(const std::string& a_name);   // applied at the next frame
+	void OnConsoleClosed();
 
 	std::string StateJson();
 }

@@ -83,7 +83,8 @@ namespace bridge
 		{
 			if (!a_name || !*a_name) { return true; }
 			static const std::unordered_set<std::string> skip = { "_parent", "_root", "_global", "_level0", "this", "prototype", "__proto__",
-				"constructor", "__constructor__", "_lockroot", "super" };
+				"constructor", "__constructor__", "_lockroot", "super", "_entryClipManager", "listState", "listEnumeration", "constraints", "scrollbar",
+				"_clipPool", "SliderInstance" };
 			return skip.contains(a_name);
 		}
 
@@ -115,6 +116,10 @@ namespace bridge
 			{
 				const std::uint32_t size = a_array.GetArraySize();
 				if (size == 0 || lists.size() >= kMaxLists) { return; }
+				for (const auto& l : lists)
+				{
+					if (l.path == a_path) { return; }
+				}
 				RE::GFxValue first;
 				if (!a_array.GetElement(0, &first) || !(first.IsObject() || first.IsDisplayObject())) { return; }
 
@@ -238,11 +243,27 @@ namespace bridge
 
 		std::string Pretty(std::string a_label)
 		{
-			// RaceMenu's labels can be translation keys ("$Nose Height"); the translated text lives in RaceMenu's BSA, which
-			// cannot be read here. Show the key without its '$'. CONFIRM IN THE TEST RUN: how many labels arrive as keys.
-			if (!a_label.empty() && a_label.front() == '$') { a_label.erase(0, 1); }
+			// RaceMenu's labels can be translation keys ("$HEAD"); the translated text lives in RaceMenu's BSA, which cannot be
+			// read here. Show the key without its '$', and an all-capitals key in title case ("$HEAD" -> "Head").
+			if (!a_label.empty() && a_label.front() == '$')
+			{
+				a_label.erase(0, 1);
+				const bool caps = std::none_of(a_label.begin(), a_label.end(), [](char c) { return c >= 'a' && c <= 'z'; });
+				if (caps)
+				{
+					bool start = true;
+					for (char& c : a_label)
+					{
+						if (c == '_' || c == ' ') { c = ' '; start = true; continue; }
+						if (!start && c >= 'A' && c <= 'Z') { c = static_cast<char>(c - 'A' + 'a'); }
+						start = false;
+					}
+				}
+			}
 			return a_label;
 		}
+
+		bool IsSliderEntry(const Entry& a_e) { return Num(a_e, "sliderMin") && Num(a_e, "sliderMax") && Num(a_e, "position"); }
 
 		Model BuildModel(const std::vector<List>& a_lists, std::vector<std::string> a_engine, std::vector<std::string> a_functions)
 		{
@@ -250,67 +271,81 @@ namespace bridge
 			m.engineCallbacks = std::move(a_engine);
 			m.baseFunctions = std::move(a_functions);
 
-			// The lists: most entries with raceID (races), most entries with a value + min + max (sliders), a categoryList.
-			std::size_t bestRace = 0, bestSlider = 0;
+			// The item list: the documented path when present (test run 2026-11-06), else the largest list carrying raceID.
+			std::size_t best = 0;
 			for (std::size_t i = 0; i < a_lists.size(); ++i)
 			{
 				const auto& l = a_lists[i];
-				const bool hasRace = !FirstPresent(l, { "raceID" }).empty();
-				const bool hasValue = !FirstPresent(l, { "position", "value", "sliderValue", "currentValue" }).empty();
-				const bool hasMin = !FirstPresent(l, { "sliderMin", "min", "minimum" }).empty();
-				const bool hasMax = !FirstPresent(l, { "sliderMax", "max", "maximum" }).empty();
-				if (hasRace && l.size > bestRace) { bestRace = l.size; m.raceList = static_cast<int>(i); }
-				if (hasValue && hasMin && hasMax && l.size > bestSlider) { bestSlider = l.size; m.sliderList = static_cast<int>(i); }
-				if (m.categoryList < 0 && l.path.ends_with("categoryList")) { m.categoryList = static_cast<int>(i); }
-			}
-
-			if (m.sliderList >= 0)
-			{
-				const auto& l = a_lists[static_cast<std::size_t>(m.sliderList)];
-				m.valueField = FirstPresent(l, { "position", "value", "sliderValue", "currentValue" });
-				m.minField = FirstPresent(l, { "sliderMin", "min", "minimum" });
-				m.maxField = FirstPresent(l, { "sliderMax", "max", "maximum" });
-				m.stepField = FirstPresent(l, { "interval", "sliderInterval", "step" });
-				m.callbackField = FirstPresent(l, { "callbackName", "callback", "changeCallback" });
-				m.flagField = FirstPresent(l, { "filterFlag", "flag" });
-				for (std::uint32_t i = 0; i < l.entries.size(); ++i)
+				if (l.path == kItemList)
 				{
-					const auto& e = l.entries[i];
-					const double* v = Num(e, m.valueField);
-					const double* lo = Num(e, m.minField);
-					const double* hi = Num(e, m.maxField);
-					if (!v || !lo || !hi) { continue; }   // a header or a non-slider row in the same list
-					Slider s;
-					s.label = Pretty(e.label);
-					s.list = static_cast<std::uint32_t>(m.sliderList);
-					s.index = i;
-					s.value = static_cast<float>(*v);
-					s.min = static_cast<float>(*lo);
-					s.max = static_cast<float>(*hi);
-					if (const double* st = m.stepField.empty() ? nullptr : Num(e, m.stepField); st && *st > 0.0) { s.step = static_cast<float>(*st); }
-					if (const double* f = m.flagField.empty() ? nullptr : Num(e, m.flagField)) { s.flag = static_cast<std::uint32_t>(*f); }
-					if (const std::string* cb = m.callbackField.empty() ? nullptr : Str(e, m.callbackField)) { s.callback = *cb; }
-					if (s.callback.empty()) { s.callback = std::format("#{}", i); }   // no callback member: keyed by index
-					s.engine = std::binary_search(m.engineCallbacks.begin(), m.engineCallbacks.end(), s.callback);
-					m.sliders.push_back(std::move(s));
+					m.raceList = static_cast<int>(i);
+					break;
+				}
+				if (!FirstPresent(l, { "raceID" }).empty() && l.size > best)
+				{
+					best = l.size;
+					m.raceList = static_cast<int>(i);
 				}
 			}
+			for (std::size_t i = 0; i < a_lists.size(); ++i)
+			{
+				if (a_lists[i].path == kCategoryListPath) { m.categoryList = static_cast<int>(i); }
+			}
+			if (m.categoryList < 0)
+			{
+				for (std::size_t i = 0; i < a_lists.size(); ++i)
+				{
+					if (a_lists[i].path.find("categoryList") != std::string::npos && !FirstPresent(a_lists[i], { "flag" }).empty())
+					{
+						m.categoryList = static_cast<int>(i);
+						break;
+					}
+				}
+			}
+			m.sliderList = m.raceList;   // one list holds both (test run 2026-11-06)
+			m.valueField = "position";
+			m.minField = "sliderMin";
+			m.maxField = "sliderMax";
+			m.stepField = "interval";
+			m.callbackField = "callbackName";
+			m.flagField = "filterFlag";
 
 			if (m.raceList >= 0)
 			{
 				const auto& l = a_lists[static_cast<std::size_t>(m.raceList)];
-				const std::string flagField = FirstPresent(l, { "filterFlag", "flag" });
 				for (std::uint32_t i = 0; i < l.entries.size(); ++i)
 				{
 					const auto& e = l.entries[i];
+					const double* f = Num(e, "filterFlag");
+					const std::uint32_t flag = f ? static_cast<std::uint32_t>(*f) : 0;
+					if (IsSliderEntry(e))
+					{
+						Slider s;
+						s.label = Pretty(e.label);
+						s.list = static_cast<std::uint32_t>(m.raceList);
+						s.index = i;
+						s.flag = flag;
+						s.value = static_cast<float>(*Num(e, "position"));
+						s.min = static_cast<float>(*Num(e, "sliderMin"));
+						s.max = static_cast<float>(*Num(e, "sliderMax"));
+						if (const double* st = Num(e, "interval"); st && *st > 0.0) { s.step = static_cast<float>(*st); }
+						if (const std::string* cb = Str(e, "callbackName")) { s.callback = *cb; }
+						if (const double* id = Num(e, "sliderID")) { s.sliderID = *id; }
+						s.key = s.callback + "|" + (std::isnan(s.sliderID) ? e.label : std::format("{:g}", s.sliderID));
+						s.engine = std::binary_search(m.engineCallbacks.begin(), m.engineCallbacks.end(), s.callback);
+						m.sliders.push_back(std::move(s));
+						continue;
+					}
+					if (e.label.empty() || !Num(e, "raceID")) { continue; }   // empty rows were the blank tiles of the test run
 					Race r;
 					r.label = Pretty(e.label);
 					r.list = static_cast<std::uint32_t>(m.raceList);
 					r.index = i;
-					if (const double* id = Num(e, "raceID")) { r.raceID = *id; }
-					if (const double* f = flagField.empty() ? nullptr : Num(e, flagField)) { r.flag = static_cast<std::uint32_t>(*f); }
-					r.other = r.flag != 0 && (r.flag & kCategoryRace) == 0;
-					if (const std::string* d = Str(e, "description")) { r.description = *d; }
+					r.flag = flag;
+					r.raceID = *Num(e, "raceID");
+					r.other = (flag & kCategoryRace) == 0;   // filed under another mod's category (Apprentice)
+					if (const std::string* d = Str(e, "raceDescription")) { r.description = *d; }
+					else if (const std::string* d2 = Str(e, "description")) { r.description = *d2; }
 					m.races.push_back(std::move(r));
 				}
 			}
@@ -318,34 +353,27 @@ namespace bridge
 			if (m.categoryList >= 0)
 			{
 				const auto& l = a_lists[static_cast<std::size_t>(m.categoryList)];
-				const std::string flagField = FirstPresent(l, { "flag", "filterFlag" });
 				for (const auto& e : l.entries)
 				{
-					const double* f = flagField.empty() ? nullptr : Num(e, flagField);
-					if (!f || e.label.empty()) { continue; }
-					m.categories.push_back({ Pretty(e.label), static_cast<std::uint32_t>(*f) });
+					const double* f = Num(e, "flag");
+					if (!f || e.label.empty() || e.label == "$ALL") { continue; }
+					const auto flag = static_cast<std::uint32_t>(*f);
+					if (flag == 0 || flag == 0xFFFFFFFF) { continue; }
+					m.categories.push_back({ Pretty(e.label), flag });
 				}
 			}
 			if (m.categories.empty())
 			{
-				// No category list found: RaceMenuBase.psc's documented sections.
 				m.categories = { { "Race", 2 }, { "Body", 4 }, { "Head", 8 }, { "Face", 16 }, { "Eyes", 32 }, { "Brow", 64 }, { "Mouth", 128 }, { "Hair", 256 },
 					{ "Extra", 512 } };
 			}
 
-			// Done: an AS function on the base or panels clip named like an accept. CONFIRM IN THE TEST RUN.
-			if (!settings::doneFunction.empty()) { m.doneFunction = settings::doneFunction; }
-			else
+			// Done: sDoneFunction when set; otherwise the game's own ConfirmDone handler (found in the test run), called through
+			// the movie's GameDelegate like the movie's own Done.
+			m.doneFunction = settings::doneFunction;
+			if (m.doneFunction.empty() && std::binary_search(m.engineCallbacks.begin(), m.engineCallbacks.end(), std::string("ConfirmDone")))
 			{
-				static const std::regex done(R"((^|\.)(on)?(done|accept|confirm|finish)[A-Za-z]*$)", std::regex::icase);
-				for (const auto& f : m.baseFunctions)
-				{
-					if (std::regex_search(f, done))
-					{
-						m.doneFunction = f;
-						break;
-					}
-				}
+				m.doneFunction = "GameDelegate:ConfirmDone";
 			}
 			return m;
 		}
@@ -391,6 +419,12 @@ namespace bridge
 
 			const auto started = std::chrono::steady_clock::now();
 			Walker walker;
+			for (const char* known : { kItemList, kCategoryListPath })
+			{
+				RE::GFxValue array;
+				if (movie->GetVariable(&array, known) && array.IsArray()) { walker.RecordArray(array, known); }
+				else { logger::warn("probe: {} is not there (RaceMenu version or reskin differs) - falling back to the walk", known); }
+			}
 			walker.Walk(root, "_root", 0);
 			auto plugins = ReadPlugins(movie);
 			auto functions = FunctionsOf(movie, kBaseRoot);
@@ -407,7 +441,7 @@ namespace bridge
 				std::scoped_lock guard(g_lock);
 				for (auto& s : model.sliders)
 				{
-					auto [it, inserted] = g_openValues.try_emplace(s.callback, s.value);
+					auto [it, inserted] = g_openValues.try_emplace(s.key, s.value);
 					s.openValue = it->second;
 				}
 				g_snap.lists = std::move(walker.lists);
@@ -508,7 +542,7 @@ namespace bridge
 
 			for (const auto& [callback, value] : pending)
 			{
-				const auto it = std::find_if(snap.model.sliders.begin(), snap.model.sliders.end(), [&](const Slider& s) { return s.callback == callback; });
+				const auto it = std::find_if(snap.model.sliders.begin(), snap.model.sliders.end(), [&](const Slider& s) { return s.key == callback; });
 				if (it == snap.model.sliders.end() || it->list >= snap.lists.size())
 				{
 					logger::warn("slider apply: no slider '{}' in the model", callback);
@@ -524,7 +558,7 @@ namespace bridge
 				}
 				else { logger::debug("slider apply: entry {}[{}] not reachable; value member not set", snap.lists[s.list].path, s.index); }
 
-				if (haveSetParams && !s.callback.starts_with("#"))
+				if (haveSetParams && !s.engine && !s.callback.empty())
 				{
 					RE::GFxValue params;
 					movie->CreateArray(&params);
@@ -536,7 +570,7 @@ namespace bridge
 					}
 					panels.Invoke("RSM_SetSliderParameters", nullptr, &params, 1);
 				}
-				if (!s.callback.starts_with("#")) { SendSliderEvent(s.callback, value); }
+				if (!s.engine && !s.callback.empty()) { SendSliderEvent(s.callback, value); }   // RaceMenu plugin sliders
 
 				if (s.engine && settings::engineSliderCalls)
 				{
@@ -549,6 +583,7 @@ namespace bridge
 						movie->CreateString(&args[0], s.callback.c_str());
 						movie->CreateArray(&args[1]);
 						args[1].PushBack(RE::GFxValue(static_cast<double>(value)));
+						if (!std::isnan(s.sliderID)) { args[1].PushBack(RE::GFxValue(s.sliderID)); }
 						delegate.Invoke("call", nullptr, args, 2);
 					}
 				}
@@ -561,6 +596,7 @@ namespace bridge
 		public:
 			RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* a_event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override
 			{
+				if (a_event && !a_event->opening && a_event->menuName == RE::Console::MENU_NAME && g_menuOpen) { editor::OnConsoleClosed(); }
 				if (!a_event || a_event->menuName != RE::RaceSexMenu::MENU_NAME) { return RE::BSEventNotifyControl::kContinue; }
 				if (a_event->opening)
 				{
@@ -673,7 +709,7 @@ namespace bridge
 			std::scoped_lock guard(g_lock);
 			for (auto& s : g_snap.model.sliders)
 			{
-				if (s.callback == a_callback) { s.value = a_value; }
+				if (s.key == a_callback) { s.value = a_value; }
 			}
 			Touch();
 		}
@@ -780,6 +816,21 @@ namespace bridge
 		tasks->AddUITask([fn]() {
 			RE::GFxMovieView* movie = Movie();
 			if (!movie) { return; }
+			if (fn.starts_with("GameDelegate:"))
+			{
+				RE::GFxValue delegate;
+				if (!movie->GetVariable(&delegate, "_global.gfx.io.GameDelegate") || !delegate.IsObject())
+				{
+					logger::warn("Done: the movie has no GameDelegate");
+					return;
+				}
+				RE::GFxValue args[2];
+				movie->CreateString(&args[0], fn.substr(13).c_str());
+				movie->CreateArray(&args[1]);
+				delegate.Invoke("call", nullptr, args, 2);
+				logger::info("Done: GameDelegate.call(\"{}\")", fn.substr(13));
+				return;
+			}
 			const auto dot = fn.rfind('.');
 			RE::GFxValue owner;
 			if (dot == std::string::npos || !movie->GetVariable(&owner, fn.substr(0, dot).c_str()))
@@ -791,6 +842,48 @@ namespace bridge
 			logger::info("Done: called {}", fn);
 		});
 		return true;
+	}
+
+	void TurnBy(float a_degrees)
+	{
+		auto* tasks = SKSE::GetTaskInterface();
+		if (!tasks || !g_menuOpen || a_degrees == 0.0F) { return; }
+		tasks->AddUITask([a_degrees]() {
+			RE::GFxMovieView* movie = Movie();
+			if (!movie) { return; }
+			RE::GFxValue chargen;
+			if (!movie->GetVariable(&chargen, "_global.skse.plugins.CharGen") || !chargen.IsObject())
+			{
+				static bool warned = false;
+				if (!warned) { warned = true; logger::warn("turn: skse.plugins.CharGen is not there"); }
+				return;
+			}
+			RE::GFxValue current;
+			if (!chargen.Invoke("GetPlayerRotation", &current) || !current.IsNumber())
+			{
+				static bool warned = false;
+				if (!warned) { warned = true; logger::warn("turn: CharGen.GetPlayerRotation gave no number - CONFIRM IN THE TEST RUN"); }
+				return;
+			}
+			RE::GFxValue next(current.GetNumber() + static_cast<double>(a_degrees));
+			chargen.Invoke("SetPlayerRotation", nullptr, &next, 1);
+			static bool logged = false;
+			if (!logged) { logged = true; logger::info("turn: rotation {:.2f} -> {:.2f} (first turn of the session)", current.GetNumber(), next.GetNumber()); }
+		});
+	}
+
+	void ToggleLight()
+	{
+		auto* tasks = SKSE::GetTaskInterface();
+		if (!tasks) { return; }
+		tasks->AddTask([]() {
+			if (auto* source = SKSE::GetModCallbackEventSource())
+			{
+				SKSE::ModCallbackEvent event{ "RSM_ToggleLight", "", 0.0F, nullptr };
+				source->SendEvent(&event);
+				logger::info("light: RSM_ToggleLight sent");
+			}
+		});
 	}
 
 	void ReprobeSoon(int a_delayMs)
@@ -837,10 +930,11 @@ namespace bridge
 		}
 		const auto& m = g_snap.model;
 		const auto changed = std::count_if(m.sliders.begin(), m.sliders.end(), [](const Slider& s) { return !std::isnan(s.openValue) && s.value != s.openValue; });
+		const auto otherChoices = std::count_if(m.races.begin(), m.races.end(), [](const Race& r) { return r.other; });
 		return std::format(
-			R"({{"menuOpen":{},"probed":{},"probeCount":{},"nodes":{},"status":"{}","serial":{},"panelsHidden":{},"model":{{"races":{},"sliders":{},"changed":{},"categories":{},"raceList":{},"sliderList":{},"categoryList":{},"valueField":"{}","callbackField":"{}","flagField":"{}","itemPressOwner":"{}","doneFunction":"{}","engineHandlers":{}}},"lists":[{}],"plugins":{}}})",
+			R"({{"menuOpen":{},"probed":{},"probeCount":{},"nodes":{},"status":"{}","serial":{},"panelsHidden":{},"model":{{"races":{},"sliders":{},"changed":{},"choices":{},"categories":{},"raceList":{},"sliderList":{},"categoryList":{},"valueField":"{}","callbackField":"{}","flagField":"{}","itemPressOwner":"{}","doneFunction":"{}","engineHandlers":{}}},"lists":[{}],"plugins":{}}})",
 			g_snap.menuOpen, g_snap.probed, g_snap.probeCount, g_snap.nodesVisited, Escape(g_snap.status), g_snap.serial, g_snap.panelsHidden, m.races.size(), m.sliders.size(),
-			changed, m.categories.size(), m.raceList, m.sliderList, m.categoryList, Escape(m.valueField), Escape(m.callbackField), Escape(m.flagField),
+			changed, otherChoices, m.categories.size(), m.raceList, m.sliderList, m.categoryList, Escape(m.valueField), Escape(m.callbackField), Escape(m.flagField),
 			Escape(m.itemPressOwner), Escape(m.doneFunction), m.engineCallbacks.size(), lists, g_snap.plugins.size());
 	}
 
@@ -875,8 +969,8 @@ namespace bridge
 		for (std::size_t i = a_from; i < end; ++i)
 		{
 			const auto& s = m.sliders[i];
-			sliders += std::format(R"({}{{"i":{},"label":"{}","callback":"{}","flag":{},"value":{},"min":{},"max":{},"step":{},"open":{},"engine":{}}})", sliders.empty() ? "" : ",",
-				s.index, Escape(s.label), Escape(s.callback), s.flag, s.value, s.min, s.max, s.step, std::isnan(s.openValue) ? 0.0F : s.openValue, s.engine);
+			sliders += std::format(R"({}{{"i":{},"label":"{}","key":"{}","callback":"{}","flag":{},"value":{},"min":{},"max":{},"step":{},"open":{},"engine":{}}})", sliders.empty() ? "" : ",",
+				s.index, Escape(s.label), Escape(s.key), Escape(s.callback), s.flag, s.value, s.min, s.max, s.step, std::isnan(s.openValue) ? 0.0F : s.openValue, s.engine);
 		}
 		for (const auto& f : m.baseFunctions) { fns += std::format("{}\"{}\"", fns.empty() ? "" : ",", Escape(f)); }
 		return std::format(R"({{"ok":true,"categories":[{}],"races":[{}],"slidersFrom":{},"sliders":[{}],"functions":[{}]}})", cats, races, a_from, sliders, fns);

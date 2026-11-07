@@ -45,6 +45,9 @@ namespace editor
 		std::atomic<std::uint32_t> g_framesDrawn{ 0 };
 		std::atomic<int> g_category{ 0 };       // rail index
 		std::atomic<bool> g_finishRequested{ false };
+		std::atomic<bool> g_showWhenConsoleCloses{ false };
+		std::string g_pendingCategory;          // guarded by g_whyLock: a rail entry asked for by name (DevBench)
+		std::atomic<std::uint32_t> g_closeUps{ 0 };
 		std::string g_lastWhy;
 		std::mutex g_whyLock;
 		std::string g_settingsStatus;
@@ -204,45 +207,31 @@ namespace editor
 			std::uint32_t flag = 0;
 		};
 
+		// The rail, in RaceMenu's category order (test run 2026-11-06: its category list names every category, Apprentice's
+		// included). A category whose rows are races is the race grid; one whose rows are another mod's choices is a choice
+		// grid; the rest are sliders. A choice flag no category names gets one entry after Race.
 		std::vector<RailItem> BuildRail(const bridge::Snapshot& a_s)
 		{
 			std::vector<RailItem> rail;
 			const auto& m = a_s.model;
+			std::set<std::uint32_t> covered;
 			for (const auto& c : m.categories)
 			{
-				if (c.flag & bridge::kCategoryRace) { rail.push_back({ RailItem::Kind::kRace, c.label, c.flag }); }
-				else { rail.push_back({ RailItem::Kind::kSliders, c.label, c.flag }); }
+				const bool races = std::any_of(m.races.begin(), m.races.end(), [&](const bridge::Race& r) { return !r.other && (r.flag & c.flag); });
+				const bool choices = std::any_of(m.races.begin(), m.races.end(), [&](const bridge::Race& r) { return r.other && (r.flag & c.flag); });
+				const bool sliders = std::any_of(m.sliders.begin(), m.sliders.end(), [&](const bridge::Slider& sl) { return sl.flag & c.flag; });
+				if (races || (c.flag & bridge::kCategoryRace)) { rail.push_back({ RailItem::Kind::kRace, c.label, c.flag }); }
+				else if (choices) { rail.push_back({ RailItem::Kind::kChoices, c.label, c.flag }); }
+				else if (sliders) { rail.push_back({ RailItem::Kind::kSliders, c.label, c.flag }); }
+				else { continue; }   // a category with nothing in it for this character
+				covered.insert(c.flag);
 			}
-			// Another mod's choices filed in the race list (Apprentice: classes, traits) get their own rail entries right
-			// after Race, labelled from the category list when it names their flag.
-			std::set<std::uint32_t> others;
+			std::set<std::uint32_t> orphans;
 			for (const auto& r : m.races)
 			{
-				if (r.other) { others.insert(r.flag); }
+				if (r.other && !std::any_of(covered.begin(), covered.end(), [&](std::uint32_t f) { return (r.flag & f) != 0; })) { orphans.insert(r.flag); }
 			}
-			std::size_t at = 1;
-			for (std::size_t i = 0; i < rail.size(); ++i)
-			{
-				if (rail[i].kind == RailItem::Kind::kRace)
-				{
-					at = i + 1;
-					break;
-				}
-			}
-			for (const auto flag : others)
-			{
-				const bool named = std::any_of(rail.begin(), rail.end(), [flag](const RailItem& r) { return r.flag == flag; });
-				if (named)
-				{
-					for (auto& r : rail)
-					{
-						if (r.flag == flag) { r.kind = RailItem::Kind::kChoices; }
-					}
-					continue;
-				}
-				rail.insert(rail.begin() + static_cast<std::ptrdiff_t>(std::min(at, rail.size())), { RailItem::Kind::kChoices, std::format("Choices {}", flag), flag });
-				++at;
-			}
+			for (const auto flag : orphans) { rail.insert(rail.begin() + (rail.empty() ? 0 : 1), { RailItem::Kind::kChoices, std::format("Choices {}", flag), flag }); }
 			rail.push_back({ RailItem::Kind::kDiscovery, NTR("RMM_Discovery", "Discovery"), 0 });
 			return rail;
 		}
@@ -250,7 +239,7 @@ namespace editor
 		// ---- edits ------------------------------------------------------------------------------------------------------
 		void Apply(const std::string& a_callback, float a_before, float a_after, bool a_record)
 		{
-			bridge::SetSlider(a_callback, a_after);
+			bridge::SetSlider(a_callback, a_after);   // a_callback is the slider's key
 			if (!a_record) { return; }
 			const auto now = NowMs();
 			if (!g_undo.empty() && g_undo.back().callback == a_callback && now - g_undo.back().at < 600)
@@ -286,7 +275,7 @@ namespace editor
 
 		void SliderRow(const bridge::Slider& a_s)
 		{
-			ImGuiMCP::PushID(a_s.callback.c_str());
+			ImGuiMCP::PushID(a_s.key.c_str());
 			float v = a_s.value;
 			const bool changed = !std::isnan(a_s.openValue) && a_s.value != a_s.openValue;
 			const std::string label = (changed ? "* " : "") + a_s.label;
@@ -295,7 +284,7 @@ namespace editor
 			const float lo = settings::allowPastRange ? std::min(a_s.min, a_s.max * -2.0F) : a_s.min;
 			const float hi = settings::allowPastRange ? a_s.max * 2.0F : a_s.max;
 			ImGuiMCP::PushItemWidth(-1.0F);
-			if (precise::SliderFloat("##v", &v, lo, hi, FormatFor(a_s.step)) && v != a_s.value) { Apply(a_s.callback, a_s.value, v, true); }
+			if (precise::SliderFloat("##v", &v, lo, hi, FormatFor(a_s.step)) && v != a_s.value) { Apply(a_s.key, a_s.value, v, true); }
 			ImGuiMCP::PopItemWidth();
 			if (changed && ImGuiMCP::IsItemHovered())
 			{
@@ -398,6 +387,19 @@ namespace editor
 				if (ctrl && ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_Z, false)) { Undo(); }
 				if (ctrl && ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_Y, false)) { Redo(); }
 				if (ctrl && ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_F, false)) { g_focusSearch = true; }
+				const bool typing = io && io->WantTextInput;
+				if (!typing && !ctrl)
+				{
+					// Keyboard: Q / E turn, L light, R Done (SPEC 8). Pad: right stick turns, X Done.
+					float turn = 0.0F;
+					if (ImGuiMCP::IsKeyDown(ImGuiMCP::ImGuiKey_Q)) { turn -= 2.0F; }
+					if (ImGuiMCP::IsKeyDown(ImGuiMCP::ImGuiKey_E)) { turn += 2.0F; }
+					if (ImGuiMCP::IsKeyDown(ImGuiMCP::ImGuiKey_GamepadRStickLeft)) { turn -= 2.5F; }
+					if (ImGuiMCP::IsKeyDown(ImGuiMCP::ImGuiKey_GamepadRStickRight)) { turn += 2.5F; }
+					if (turn != 0.0F) { bridge::TurnBy(turn * settings::turnSpeed / 0.35F); }
+					if (ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_L, false)) { bridge::ToggleLight(); }
+					if (ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_R, false) || ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_GamepadFaceLeft, false)) { g_finishRequested = true; }
+				}
 
 				// Search and the changed count.
 				if (g_focusSearch)
@@ -419,6 +421,17 @@ namespace editor
 
 				const float footer = ImGuiMCP::GetFrameHeightWithSpacing() * 2.2F;
 				const auto rail = BuildRail(a_s);
+				{
+					std::scoped_lock guard(g_whyLock);
+					if (!g_pendingCategory.empty())
+					{
+						for (int i = 0; i < static_cast<int>(rail.size()); ++i)
+						{
+							if (_stricmp(rail[static_cast<std::size_t>(i)].label.c_str(), g_pendingCategory.c_str()) == 0) { g_category = i; }
+						}
+						g_pendingCategory.clear();
+					}
+				}
 				int category = std::clamp(g_category.load(), 0, static_cast<int>(rail.size()) - 1);
 				const bool searching = g_search[0] != '\0';
 
@@ -516,7 +529,7 @@ namespace editor
 				{
 					for (const auto& s : a_s.model.sliders)
 					{
-						if (!std::isnan(s.openValue) && s.value != s.openValue) { Apply(s.callback, s.value, s.openValue, false); }
+						if (!std::isnan(s.openValue) && s.value != s.openValue) { Apply(s.key, s.value, s.openValue, false); }
 					}
 					g_undo.clear();
 					g_redo.clear();
@@ -540,15 +553,12 @@ namespace editor
 				if (ImGuiMCP::Button(NTR("RMM_Light", "Light")))
 				{
 					// RaceMenu's documented RSM_ToggleLight event (RaceMenu.psc OnToggleLight).
-					OnMainThread([]() {
-						if (auto* source = SKSE::GetModCallbackEventSource())
-						{
-							SKSE::ModCallbackEvent event{ "RSM_ToggleLight", "", 0.0F, nullptr };
-							source->SendEvent(&event);
-							logger::info("light: RSM_ToggleLight sent");
-						}
-					});
+					bridge::ToggleLight();
 				}
+				ImGuiMCP::SameLine();
+				if (ImGuiMCP::Button(NTR("RMM_TurnLeft", "Turn left"))) { bridge::TurnBy(-15.0F); }
+				ImGuiMCP::SameLine();
+				if (ImGuiMCP::Button(NTR("RMM_TurnRight", "Turn right"))) { bridge::TurnBy(15.0F); }
 				ImGuiMCP::SeparatorText(NTR("RMM_Presets", "Presets"));
 				if (g_presetsDirty)
 				{
@@ -782,11 +792,33 @@ namespace editor
 			logger::info("RaceMenu opened; no editor window (see the registration lines above)");
 			return;
 		}
+		if (auto* ui = RE::UI::GetSingleton(); ui && ui->IsMenuOpen(RE::Console::MENU_NAME))
+		{
+			// showracemenu from the console: the console keeps the keys; the editor comes up when it closes (SPEC 2.4).
+			g_showWhenConsoleCloses = settings::enabled && settings::startInEditor;
+			logger::info("RaceMenu opened under the console; the editor waits for the console to close");
+			return;
+		}
 		if (settings::enabled && settings::startInEditor) { SetShown(true, "RaceMenu opened"); }
 		else { logger::info("RaceMenu opened; the editor waits for the switch key (enabled={} startInEditor={})", settings::enabled, settings::startInEditor); }
 	}
 
-	void OnRaceMenuClosed() { SetShown(false, "RaceMenu closed"); }
+	void OnRaceMenuClosed()
+	{
+		g_showWhenConsoleCloses = false;
+		SetShown(false, "RaceMenu closed");
+	}
+
+	void OnConsoleClosed()
+	{
+		if (g_showWhenConsoleCloses.exchange(false)) { SetShown(true, "console closed"); }
+	}
+
+	void SelectCategoryByName(const std::string& a_name)
+	{
+		std::scoped_lock guard(g_whyLock);
+		g_pendingCategory = a_name;
+	}
 
 	void OnSwitchKey(const char* a_source)
 	{

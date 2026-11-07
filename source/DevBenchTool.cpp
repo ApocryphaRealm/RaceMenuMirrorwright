@@ -115,7 +115,8 @@ namespace DevBenchTool
 			}
 			else if (op == "slider")
 			{
-				const std::string callback = StringFrom(args, "callback");
+				std::string callback = StringFrom(args, "key");
+				if (callback.empty()) { callback = StringFrom(args, "callback"); }
 				const auto value = DoubleFrom(args, "value");
 				if (callback.empty() || !value) { out = R"({"ok":false,"error":"op=slider needs callback and value"})"; }
 				else
@@ -139,7 +140,9 @@ namespace DevBenchTool
 			}
 			else if (op == "category")
 			{
-				editor::SelectCategory(static_cast<int>(NumberFrom(args, "index").value_or(0)));
+				if (const std::string n = StringFrom(args, "name"); !n.empty()) { editor::SelectCategoryByName(n); }
+				else { editor::SelectCategory(static_cast<int>(NumberFrom(args, "index").value_or(0))); }
+				std::this_thread::sleep_for(std::chrono::milliseconds(200));
 				out = State();
 			}
 			else if (op == "done")
@@ -188,7 +191,7 @@ namespace DevBenchTool
 			"frames, rail entry), the bridge (RaceMenu open, probes, the model: races, sliders, changed count, which lists and member names were chosen, the "
 			"onItemPress owner, the Done function, panels hidden) and every list found in the movie. op=probe: read RaceMenu again. op=list list=<i> from count: a "
 			"list's entries with their strings and numbers. op=plugins: _global.skse.plugins members and the game's own handlers for the menu. op=model from count: "
-			"categories, races, sliders (callback, value, range, open value, engine), function members. op=slider callback=<name> value=<n>: move a slider as the "
+			"categories, races, sliders (callback, value, range, open value, engine), function members. op=slider key=<slider key from op=model> value=<n>: move a slider as the "
 			"editor does. op=choose list=<i> index=<n>: press a race or choice entry through onItemPress. op=category index=<n>: pick a rail entry. op=done: press "
 			"Done. op=presets: the preset folder and files. op=show / op=hide / op=switch: the editor window. op=reload: re-read the INI.\","
 			"\"inputSchema\":{\"type\":\"object\",\"properties\":{\"op\":{\"type\":\"string\"},\"list\":{\"type\":\"integer\"},\"index\":{\"type\":\"integer\"},"

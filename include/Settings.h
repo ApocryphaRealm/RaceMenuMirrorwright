@@ -32,7 +32,7 @@ namespace settings
 	inline std::uint32_t switchKey = 0x3E;  // iSwitchKey - DirectInput scan code; F4 (DEFAULT-KEYS.md). 0 = unbound
 
 	// [Advanced] - for the test run; CONFIRM IN THE TEST RUN (PLAN.md)
-	inline bool engineSliderCalls = false;  // bEngineSliderCalls - also pass a game-handled slider through the movie's GameDelegate
+	inline bool engineSliderCalls = true;   // bEngineSliderCalls - pass a game-handled slider through the movie's GameDelegate
 	inline std::string doneFunction;        // sDoneFunction - the AS function Done calls; empty = found by name at run time
 
 	// [Debug]

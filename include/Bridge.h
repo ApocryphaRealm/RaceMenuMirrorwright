@@ -22,6 +22,11 @@ namespace bridge
 	inline constexpr const char* kBaseRoot = "_root.RaceSexMenuBaseInstance";
 	inline constexpr std::uint32_t kCategoryRace = 2;
 
+	// Settled by the test run of 2026-11-06 (4. plans\racemenu-rebuild\test-run-20261106): the one entry list that holds the
+	// races, the sliders and other mods' choices, and the category list. Read first; the walk remains the fallback.
+	inline constexpr const char* kItemList = "_root.RaceSexMenuBaseInstance.RaceSexPanelsInstance.racePanel.itemList._entryList";
+	inline constexpr const char* kCategoryListPath = "_root.RaceSexMenuBaseInstance.RaceSexPanelsInstance.racePanel.categoryButtons.categoryList._entryList";
+
 	struct Entry
 	{
 		std::string label;    // "text", or the first string member
@@ -48,6 +53,9 @@ namespace bridge
 	{
 		std::string label;
 		std::string callback;
+		std::string key;            // unique: callback + sliderID (or + label). Test run 2026-11-06: all 293 sliders of the
+		                            // stock menu use a handful of game callbacks (ChangeDoubleMorph...), so a callback alone collides
+		double sliderID = NAN;      // the entry's sliderID, when it has one (passed to the game's handler)
 		std::uint32_t list = 0;     // index into Snapshot::lists
 		std::uint32_t index = 0;    // element index in that list
 		std::uint32_t flag = 0;     // filterFlag: the category bits
@@ -111,7 +119,9 @@ namespace bridge
 	bool CopyIfChanged(std::uint64_t& a_serial, Snapshot& a_out);
 
 	// Commands from the window (any thread). They are applied in UI tasks; the snapshot shows the new value at once.
-	void SetSlider(const std::string& a_callback, float a_value);
+	void SetSlider(const std::string& a_key, float a_value);         // a_key = Slider::key
+	void TurnBy(float a_degrees);                                    // RaceMenu's CharGen.GetPlayerRotation / SetPlayerRotation
+	void ToggleLight();                                              // RaceMenu's RSM_ToggleLight event
 	void ChooseEntry(std::uint32_t a_list, std::uint32_t a_index);   // a race or another mod's choice, through onItemPress
 	void SetPanelsHidden(bool a_hidden);                             // RaceMenu's own panels, while the editor is up
 	bool Finish();                                                   // RaceMenu's Done; false when no Done function is known
