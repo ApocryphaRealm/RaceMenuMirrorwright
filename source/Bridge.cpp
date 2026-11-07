@@ -18,6 +18,7 @@
 #include <unordered_set>
 #include <future>
 #include <cmath>
+#include <cstring>
 
 // The RaceSex Menu, read and driven.
 //
@@ -473,18 +474,24 @@ namespace bridge
 				{
 					if (npc && npc->headRelatedData && npc->headRelatedData->hairColor)
 					{
+						// Run 11: the form's colour read dark olive for light blond hair; the hair shader brightens it about 2x (a
+						// hypothesis), so the swatch shows it doubled and clamped. Raw and shown are both logged.
 						const auto& c = npc->headRelatedData->hairColor->color;
-						s.fill = (static_cast<std::uint32_t>(c.red) << 16) | (static_cast<std::uint32_t>(c.green) << 8) | c.blue;
-						logger::info("swatch {}: hair colour form {:08X} -> #{:06X}", s.label, npc->headRelatedData->hairColor->GetFormID(), s.fill);
+						auto twice = [](std::uint8_t v) { return static_cast<std::uint32_t>(std::min(255, v * 2)); };
+						const std::uint32_t raw = (static_cast<std::uint32_t>(c.red) << 16) | (static_cast<std::uint32_t>(c.green) << 8) | c.blue;
+						s.fill = (twice(c.red) << 16) | (twice(c.green) << 8) | twice(c.blue);
+						logger::info("swatch {}: hair colour form {:08X} raw #{:06X} shown #{:06X}", s.label, npc->headRelatedData->hairColor->GetFormID(), raw, s.fill);
 					}
 					else { logger::info("swatch {}: no hair colour form on the player; the row's own colour #{:06X} stays", s.label, s.fill); }
 					continue;
 				}
 				if (s.tintType < 0 || !tints) { continue; }
+				s.noColour = true;   // until a used layer of this kind is found
 				for (const auto* tm : *tints)
 				{
 					if (tm && static_cast<int>(tm->type.underlying()) == s.tintType)
 					{
+						s.noColour = tm->alpha <= 0.0F;
 						s.fill = (static_cast<std::uint32_t>(tm->color.red) << 16) | (static_cast<std::uint32_t>(tm->color.green) << 8) | tm->color.blue;
 						logger::debug("swatch {}: tint type {} -> #{:06X}", s.label, s.tintType, s.fill);
 						break;
@@ -1051,16 +1058,17 @@ namespace bridge
 		});
 	}
 
-	// The face close-up (M3). Run 8: CharGen.GetRaceSexCameraPos returns {x, y, z} (the camera about 40 units from the player,
-	// at head height) and GetPlayerPosition {x, y, z}. The close-up moves the camera along the line to the player's head by
-	// half the distance through CharGen.SetRaceSexCameraPos with the same {x, y, z} shape; toggling again puts the saved
-	// position back. CONFIRM IN THE TEST RUN that SetRaceSexCameraPos takes that object.
+	// Zoom (M3). Runs 9-11: a camera position computed from CharGen.GetRaceSexCameraPos clipped into the head - that position
+	// is not where the rendered camera is. So the editor presses the game's own zoom instead: the panels clip's input
+	// handler gets a key-down of the zoom control's own key (read live from _zoomControl.keyCode; 56, Left Alt, in run 8),
+	// the way RaceMenu's menu receives that key. CONFIRM IN THE TEST RUN: which handler answers (the log says).
 	namespace
 	{
-		bool g_closeUp = false;            // UI thread only
-		std::uint32_t g_closeUpGeneration = 0;   // the menu opening it belongs to; a new opening starts without it
-		double g_savedCam[3] = { 0, 0, 0 };
+		std::atomic<bool> g_zoomedIn{ true };          // the bottom bar offered "Zoom Out" at open in run 10
+		std::atomic<std::uint32_t> g_zoomGeneration{ 0 };
 	}
+
+	bool IsZoomedIn() { return g_zoomGeneration.load() == g_generation.load() ? g_zoomedIn.load() : true; }
 
 	void ToggleCloseUp()
 	{
@@ -1068,62 +1076,54 @@ namespace bridge
 		if (!tasks || !g_menuOpen) { return; }
 		tasks->AddUITask([]() {
 			RE::GFxMovieView* movie = Movie();
-			RE::GFxValue chargen;
-			if (!movie || !movie->GetVariable(&chargen, "_global.skse.plugins.CharGen") || !chargen.IsObject())
+			if (!movie) { return; }
+			double keyCode = 56.0;
+			RE::GFxValue control, code;
+			if (movie->GetVariable(&control, (std::string(kMenuRoot) + "._zoomControl").c_str()) && control.IsObject() && control.GetMember("keyCode", &code) && code.IsNumber())
 			{
-				logger::warn("close-up: skse.plugins.CharGen is not there");
-				return;
+				keyCode = code.GetNumber();
 			}
-			auto read = [](const RE::GFxValue& a_obj, double a_out[3]) {
-				RE::GFxValue v;
-				const char* names[] = { "x", "y", "z" };
-				for (int i = 0; i < 3; ++i)
+			for (const char* owner : { kMenuRoot, kBaseRoot })
+			{
+				RE::GFxValue clip;
+				if (!movie->GetVariable(&clip, owner) || !(clip.IsObject() || clip.IsDisplayObject())) { continue; }
+				bool handled = false;
+				for (const char* value : { "keyDown", "keyUp" })
 				{
-					if (!a_obj.GetMember(names[i], &v) || !v.IsNumber()) { return false; }
-					a_out[i] = v.GetNumber();
+					RE::GFxValue details, path, args[2], result;
+					movie->CreateObject(&details);
+					RE::GFxValue v;
+					movie->CreateString(&v, value);
+					details.SetMember("value", v);
+					details.SetMember("code", RE::GFxValue(keyCode));
+					details.SetMember("skseKeycode", RE::GFxValue(keyCode));
+					RE::GFxValue empty;
+					movie->CreateString(&empty, "");
+					details.SetMember("navEquivalent", empty);
+					details.SetMember("control", empty);
+					movie->CreateArray(&path);
+					args[0] = details;
+					args[1] = path;
+					const bool called = clip.Invoke("handleInput", &result, args, 2);
+					if (std::strcmp(value, "keyDown") == 0)
+					{
+						handled = called;
+						logger::info("zoom: {}.handleInput(keyDown {}) {} -> {}", owner, keyCode, called ? "called" : "not there", result.IsBool() ? (result.GetBool() ? "true" : "false") : "no result");
+					}
+					if (!called) { break; }
 				}
-				return true;
-			};
-			RE::GFxValue cam, pos;
-			double c[3], p[3];
-			if (!chargen.Invoke("GetRaceSexCameraPos", &cam) || !cam.IsObject() || !read(cam, c) || !chargen.Invoke("GetPlayerPosition", &pos) ||
-				!pos.IsObject() || !read(pos, p))
-			{
-				logger::warn("close-up: the camera or player position could not be read");
-				return;
-			}
-			if (g_closeUpGeneration != g_generation.load()) { g_closeUp = false; }
-			double target[3];
-			if (!g_closeUp)
-			{
-				std::copy(std::begin(c), std::end(c), std::begin(g_savedCam));
-				// Run 9: halfway landed ~20 units from the face (mouth and chin, nose clipping). Now fCloseUpDistance from the head's
-				// axis along the original view direction, raised fCloseUpRaise so the eyes are in the middle.
-				// Run 10: RaceMenu's camera already sits ~44 units from the player, so a fixed 50 moved it back. The close-up is
-				// always nearer: min(fCloseUpDistance, 0.6 x the current distance) from the head point (player x/y, feet + 123 +
-				// fCloseUpRaise), on the line from that point to the camera, so the face stays where the camera looks.
-				const double head[3] = { p[0], p[1], p[2] + 123.0 + settings::closeUpRaise };
-				const double d[3] = { c[0] - head[0], c[1] - head[1], c[2] - head[2] };
-				const double len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-				if (len < 1.0)
+				if (handled)
 				{
-					logger::warn("close-up: the camera is at the head point; nothing to do");
+					if (g_zoomGeneration.load() != g_generation.load())
+					{
+						g_zoomedIn = true;
+						g_zoomGeneration = g_generation.load();
+					}
+					g_zoomedIn = !g_zoomedIn.load();
 					return;
 				}
-				const double dist = std::min(std::clamp(static_cast<double>(settings::closeUpDistance), 10.0, 200.0), len * 0.6);
-				for (int i = 0; i < 3; ++i) { target[i] = head[i] + d[i] / len * dist; }
-				logger::info("close-up: {:.0f} units from the head point before, {:.0f} after", len, dist);
 			}
-			else { std::copy(std::begin(g_savedCam), std::end(g_savedCam), std::begin(target)); }
-			RE::GFxValue arg;
-			movie->CreateObject(&arg);
-			arg.SetMember("x", RE::GFxValue(target[0]));
-			arg.SetMember("y", RE::GFxValue(target[1]));
-			arg.SetMember("z", RE::GFxValue(target[2]));
-			chargen.Invoke("SetRaceSexCameraPos", nullptr, &arg, 1);
-			g_closeUp = !g_closeUp;
-			g_closeUpGeneration = g_generation.load();
-			logger::info("close-up {}: camera ({:.0f}, {:.0f}, {:.0f}) -> ({:.0f}, {:.0f}, {:.0f})", g_closeUp ? "on" : "off", c[0], c[1], c[2], target[0], target[1], target[2]);
+			logger::warn("zoom: no handleInput on the menu's clips - the zoom key is not reachable this way");
 		});
 	}
 

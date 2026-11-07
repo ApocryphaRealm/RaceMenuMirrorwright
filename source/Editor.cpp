@@ -159,7 +159,7 @@ namespace editor
 				"igIsKeyPressed_Bool", "igIsItemHovered", "igSetTooltipV", "igPushItemWidth", "igPopItemWidth",
 				"igOpenPopup_Str", "igBeginPopupModal", "igEndPopup", "igCloseCurrentPopup", "igSetItemDefaultFocus",
 				"igInputTextWithHint", "igBeginDisabled", "igEndDisabled", "igGetContentRegionAvail", "igBeginTable", "igTableNextColumn",
-				"igEndTable", "igIsWindowAppearing", "igDummy", "igTextColoredV", "igIsItemFocused", "igPushStyleColor_Vec4", "igPopStyleColor", "igPushStyleVar_Float", "igPopStyleVar",
+				"igEndTable", "igIsWindowAppearing", "igCalcTextSize", "igGetStyle", "igDummy", "igTextColoredV", "igIsItemFocused", "igPushStyleColor_Vec4", "igPopStyleColor", "igPushStyleVar_Float", "igPopStyleVar",
 				"igSliderFloat", "igIsKeyDown_Nil", "igIsMouseDown_Nil", "igIsMouseClicked_Bool",
 				"igGetCursorScreenPos", "igGetWindowDrawList", "igGetFrameHeight", "igInvisibleButton", "igPushID_Str", "igPopID",
 				"ImDrawList_AddRectFilled", "ImDrawList_AddCircleFilled"
@@ -212,11 +212,98 @@ namespace editor
 			ImGuiMCP::SameLine();
 		}
 
-		// An icon, then a button with the label.
+		// Rows stay inside their parent (the owner, 2026-11-06: "children of the interface are bound by their parents'
+		// boundaries, so they can't run off"). A row opened with FlowBegin() measures each item before it is placed: it goes on
+		// the same line only when it fits in what is left of the parent's content width, otherwise on the next line; an item
+		// wider than a whole line has its label shortened with "..." and the full text in a tooltip. Every window and child
+		// already clips what it draws to its own rectangle, so nothing is drawn past a parent either way.
+		struct Flow
+		{
+			bool active = false;
+			bool first = true;
+			float maxW = 0.0F;
+			float used = 0.0F;
+		};
+		Flow g_flow;   // render thread
+
+		void FlowBegin()
+		{
+			g_flow.active = true;
+			g_flow.first = true;
+			g_flow.used = 0.0F;
+			g_flow.maxW = ImGuiMCP::GetContentRegionAvail().x;
+		}
+
+		void FlowEnd() { g_flow.active = false; }
+
+		float Spacing() { return ImGuiMCP::GetStyle() ? ImGuiMCP::GetStyle()->ItemSpacing.x : 8.0F; }
+		float PadX() { return ImGuiMCP::GetStyle() ? ImGuiMCP::GetStyle()->FramePadding.x : 4.0F; }
+
+		// Places an item of width a_w in the current row (SameLine when it fits). Outside a row it does nothing.
+		void FlowPlace(float a_w)
+		{
+			if (!g_flow.active) { return; }
+			if (!g_flow.first && g_flow.used + Spacing() + a_w <= g_flow.maxW)
+			{
+				ImGuiMCP::SameLine();
+				g_flow.used += Spacing() + a_w;
+			}
+			else { g_flow.used = a_w; }
+			g_flow.first = false;
+		}
+
+		// a_text shortened (whole UTF-8 characters) until it plus "..." is no wider than a_maxW.
+		std::string Ellipsize(const std::string& a_text, float a_maxW, bool& a_cut)
+		{
+			a_cut = false;
+			if (ImGuiMCP::CalcTextSize(a_text.c_str()).x <= a_maxW) { return a_text; }
+			a_cut = true;
+			std::string s = a_text;
+			while (!s.empty())
+			{
+				do { s.pop_back(); } while (!s.empty() && (static_cast<unsigned char>(s.back()) & 0xC0) == 0x80);
+				if (!s.empty() && (static_cast<unsigned char>(s.back()) & 0xC0) == 0xC0) { s.pop_back(); }
+				if (ImGuiMCP::CalcTextSize((s + "...").c_str()).x <= a_maxW) { break; }
+			}
+			return s + "...";
+		}
+
+		float IconWidth()
+		{
+			static const bool have = GetMenuFrameworkFunction<void*>("PushSolid") && GetMenuFrameworkFunction<void*>("Pop");
+			return have ? ImGuiMCP::GetFrameHeight() + Spacing() : 0.0F;
+		}
+
+		// An icon, then a button with the label - placed in the current row, shortened when a line is too narrow for it.
 		bool IconButton(unsigned a_cp, const char* a_label)
 		{
+			const float line = g_flow.active ? g_flow.maxW : ImGuiMCP::GetContentRegionAvail().x;
+			bool cut = false;
+			const std::string text = Ellipsize(a_label, std::max(10.0F, line - IconWidth() - 2.0F * PadX()), cut);
+			FlowPlace(IconWidth() + ImGuiMCP::CalcTextSize(text.c_str()).x + 2.0F * PadX());
 			Icon(a_cp);
-			return ImGuiMCP::Button(a_label);
+			const bool hit = ImGuiMCP::Button((text + "###" + a_label).c_str());
+			if (cut && ImGuiMCP::IsItemHovered()) { ImGuiMCP::SetTooltip("%s", a_label); }
+			return hit;
+		}
+
+		// A plain button in the current row.
+		bool FlowButton(const char* a_label)
+		{
+			const float line = g_flow.active ? g_flow.maxW : ImGuiMCP::GetContentRegionAvail().x;
+			bool cut = false;
+			const std::string text = Ellipsize(a_label, std::max(10.0F, line - 2.0F * PadX()), cut);
+			FlowPlace(ImGuiMCP::CalcTextSize(text.c_str()).x + 2.0F * PadX());
+			const bool hit = ImGuiMCP::Button((text + "###" + a_label).c_str());
+			if (cut && ImGuiMCP::IsItemHovered()) { ImGuiMCP::SetTooltip("%s", a_label); }
+			return hit;
+		}
+
+		// Disabled-looking text in the current row.
+		void FlowText(const std::string& a_text)
+		{
+			FlowPlace(ImGuiMCP::CalcTextSize(a_text.c_str()).x);
+			ImGuiMCP::TextDisabled("%s", a_text.c_str());
 		}
 
 		unsigned CategoryIcon(std::uint32_t a_flag, const std::string& a_label)
@@ -400,7 +487,8 @@ namespace editor
 				// A filled square drawn on the window's draw list (run 9: the icon-font square drew nothing). ImU32 is ABGR.
 				const float h = ImGuiMCP::GetFrameHeight() * 0.7F;
 				const ImGuiMCP::ImVec2 at = ImGuiMCP::GetCursorScreenPos();
-				const std::uint32_t abgr = 0xFF000000u | ((a_s.fill & 0xFF) << 16) | (a_s.fill & 0xFF00) | ((a_s.fill >> 16) & 0xFF);
+				const std::uint32_t fill = a_s.noColour ? 0x2A2A2Au : a_s.fill;   // an unused tint: a dim grey 'none' square (run 11)
+				const std::uint32_t abgr = 0xFF000000u | ((fill & 0xFF) << 16) | (fill & 0xFF00) | ((fill >> 16) & 0xFF);
 				if (auto* dl = ImGuiMCP::GetWindowDrawList())
 				{
 					ImGuiMCP::ImDrawListManager::AddRectFilled(dl, ImGuiMCP::ImVec2(at.x, at.y + 2.0F), ImGuiMCP::ImVec2(at.x + h, at.y + 2.0F + h), abgr, 2.0F, 0);
@@ -628,16 +716,18 @@ namespace editor
 					Optional("igSetKeyboardFocusHere", []() { ImGuiMCP::SetKeyboardFocusHere(0); });
 					g_focusSearch = false;
 				}
+				FlowBegin();
+				const float searchW = std::min(a_width * 0.50F, std::max(80.0F, g_flow.maxW - IconWidth()));
+				FlowPlace(IconWidth() + searchW);
 				Icon(fa::kSearch);
-				ImGuiMCP::PushItemWidth(a_width * 0.50F);
+				ImGuiMCP::PushItemWidth(searchW);
 				ImGuiMCP::InputTextWithHint("##search", NTR("RMM_SearchHint", "Search every slider (Ctrl+F)"), g_search, sizeof(g_search));
 				ImGuiMCP::PopItemWidth();
 				const auto changed = std::count_if(a_s.model.sliders.begin(), a_s.model.sliders.end(),
 					[](const bridge::Slider& s) { return !std::isnan(s.openValue) && s.value != s.openValue; });
-				ImGuiMCP::SameLine();
-				ImGuiMCP::TextDisabled("%s", std::format("{} {}", changed, NTR("RMM_Changed", "changed")).c_str());
-				ImGuiMCP::SameLine();
+				FlowText(std::format("{} {}", changed, NTR("RMM_Changed", "changed")));
 				if (IconButton(fa::kSwitch, NTR("RMM_ToRaceMenu", "RaceMenu's interface"))) { SetShown(false, "button"); }
+				FlowEnd();
 				if (ImGuiMCP::IsItemHovered()) { ImGuiMCP::SetTooltip("%s", NTR("RMM_HelpToRaceMenu", "Hides {name} and leaves RaceMenu's own interface. The switch key (F4) brings {name} back.")); }
 				ImGuiMCP::Separator();
 
@@ -739,19 +829,19 @@ namespace editor
 				ImGuiMCP::EndChild();
 
 				// Footer: Undo, Redo, Reset, Done.
+				FlowBegin();
 				ImGuiMCP::BeginDisabled(g_undo.empty());
 				if (IconButton(fa::kUndo, NTR("RMM_Undo", "Undo"))) { Undo(); }
 				ImGuiMCP::EndDisabled();
-				ImGuiMCP::SameLine();
 				ImGuiMCP::BeginDisabled(g_redo.empty());
 				if (IconButton(fa::kRedo, NTR("RMM_Redo", "Redo"))) { Redo(); }
 				ImGuiMCP::EndDisabled();
-				ImGuiMCP::SameLine();
 				ImGuiMCP::BeginDisabled(changed == 0);
 				if (IconButton(fa::kReset, NTR("RMM_Reset", "Reset"))) { ImGuiMCP::OpenPopup("##confirmReset"); }
 				ImGuiMCP::EndDisabled();
-				ImGuiMCP::SameLine();
-				if (IconButton(fa::kDone, NTR("RMM_Done", "Done")) || g_finishRequested.exchange(false))
+				const bool donePressed = IconButton(fa::kDone, NTR("RMM_Done", "Done"));
+				FlowEnd();
+				if (donePressed || g_finishRequested.exchange(false))
 				{
 					if (settings::askBeforeDone) { ImGuiMCP::OpenPopup("##confirmDone"); }
 					else { DoFinish(); }
@@ -783,17 +873,17 @@ namespace editor
 			if (ImGuiMCP::Begin(title.c_str(), nullptr, flags))
 			{
 				ImGuiMCP::SetWindowFontScale(std::clamp(settings::scale, 0.5F, 2.0F));
+				FlowBegin();
 				if (IconButton(fa::kLight, NTR("RMM_Light", "Light")))
 				{
 					// RaceMenu's documented RSM_ToggleLight event (RaceMenu.psc OnToggleLight).
 					bridge::ToggleLight();
 				}
-				ImGuiMCP::SameLine();
-				if (IconButton(fa::kCloseUp, NTR("RMM_CloseUp", "Close-up"))) { bridge::ToggleCloseUp(); }
-				// second row (run 9: one row was wider than the panel and cut Turn right off)
+				// The game's own zoom (run 11); the label follows its state.
+				if (IconButton(fa::kCloseUp, bridge::IsZoomedIn() ? NTR("RMM_ZoomOut", "Zoom out") : NTR("RMM_CloseUp", "Close-up"))) { bridge::ToggleCloseUp(); }
 				if (IconButton(fa::kTurnLeft, NTR("RMM_TurnLeft", "Turn left"))) { bridge::TurnBy(-15.0F); }
-				ImGuiMCP::SameLine();
 				if (IconButton(fa::kTurnRight, NTR("RMM_TurnRight", "Turn right"))) { bridge::TurnBy(15.0F); }
+				FlowEnd();
 				ImGuiMCP::SeparatorText(NTR("RMM_Presets", "Presets"));
 				if (g_presetsDirty)
 				{
@@ -826,10 +916,10 @@ namespace editor
 				ImGuiMCP::PopItemWidth();
 
 				const bool haveSel = g_selectedPreset >= 0 && g_selectedPreset < static_cast<int>(g_presets.size()) && g_presets[static_cast<std::size_t>(g_selectedPreset)].loadable;
+				FlowBegin();
 				ImGuiMCP::BeginDisabled(!haveSel);
 				if (IconButton(fa::kLoad, NTR("RMM_Load", "Load"))) { ImGuiMCP::OpenPopup("##confirmLoad"); }
 				ImGuiMCP::EndDisabled();
-				ImGuiMCP::SameLine();
 				ImGuiMCP::BeginDisabled(g_presetName[0] == '\0');
 				if (IconButton(fa::kSave, NTR("RMM_SavePreset", "Save")))
 				{
@@ -841,10 +931,10 @@ namespace editor
 					}
 				}
 				ImGuiMCP::EndDisabled();
-				ImGuiMCP::SameLine();
 				ImGuiMCP::BeginDisabled(g_selectedPreset < 0 || g_selectedPreset >= static_cast<int>(g_presets.size()));
 				if (IconButton(fa::kDelete, NTR("RMM_Delete", "Delete"))) { ImGuiMCP::OpenPopup("##confirmDelete"); }
 				ImGuiMCP::EndDisabled();
+				FlowEnd();
 				ImGuiMCP::TextWrapped("%s", g_message.c_str());
 
 				if (Confirm("##confirmLoad", NTR("RMM_AskLoad", "Load this preset? Unsaved changes are replaced."), NTR("RMM_Load", "Load")) && haveSel)
@@ -984,26 +1074,26 @@ namespace editor
 			ImGuiMCP::PopItemWidth();
 			ImGuiMCP::SeparatorText("");
 
-			if (ImGuiMCP::Button(NTR("RMM_Save", "Save")))
+			FlowBegin();
+			if (FlowButton(NTR("RMM_Save", "Save")))
 			{
 				SetStatus(NTR("RMM_Saving", "Saving..."));
 				const std::string ok = NTR("RMM_Saved", "Settings saved.");
 				const std::string bad = NTR("RMM_SaveFailed", "Could not write the INI. See the log.");
 				OnMainThread([ok, bad]() { SetStatus(settings::Save() ? ok : bad); });
 			}
-			ImGuiMCP::SameLine();
-			if (ImGuiMCP::Button(NTR("RMM_Reload", "Reload from INI")))
+			if (FlowButton(NTR("RMM_Reload", "Reload from INI")))
 			{
 				const std::string ok = NTR("RMM_Reloaded", "Settings reloaded from the INI.");
 				const std::string bad = NTR("RMM_ReloadFailed", "Could not read the INI. See the log.");
 				OnMainThread([ok, bad]() { SetStatus(settings::Reload() ? ok : bad); });
 			}
-			ImGuiMCP::SameLine();
-			if (ImGuiMCP::Button(NTR("RMM_Restore", "Restore defaults")))
+			if (FlowButton(NTR("RMM_Restore", "Restore defaults")))
 			{
 				OnMainThread([]() { settings::RestoreDefaults(); });
 				SetStatus(NTR("RMM_Restored", "Defaults restored. Press Save to keep them."));
 			}
+			FlowEnd();
 			if (const std::string status = GetStatus(); !status.empty()) { ImGuiMCP::TextWrapped("%s", status.c_str()); }
 			ImGuiMCP::TextDisabled("%s", settings::GetIniPath().c_str());
 		}

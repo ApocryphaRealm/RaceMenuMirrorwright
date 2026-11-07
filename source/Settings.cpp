@@ -64,8 +64,6 @@ namespace settings
 				{ "Layout", "fScale", &scale, 1.0F, 0.5F, 2.0F },
 				{ "Layout", "fPanelWidth", &panelWidth, 0.30F, 0.20F, 0.50F },
 				{ "Camera", "fTurnSpeed", &turnSpeed, 0.35F, 0.05F, 2.0F },
-				{ "Camera", "fCloseUpDistance", &closeUpDistance, 28.0F, 10.0F, 200.0F },
-				{ "Camera", "fCloseUpRaise", &closeUpRaise, 0.0F, -50.0F, 50.0F },
 			};
 			return keys;
 		}

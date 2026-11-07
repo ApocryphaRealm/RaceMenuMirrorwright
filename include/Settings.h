@@ -26,8 +26,6 @@ namespace settings
 	inline bool showInternalNames = false;  // bShowInternalNames
 
 	// [Camera]
-	inline float closeUpDistance = 28.0F;   // fCloseUpDistance - the close-up's distance from the head (10 - 200); never more than 0.6 x the current
-	inline float closeUpRaise = 0.0F;       // fCloseUpRaise - the head point is the feet + 123 + this (-50 - 50)
 	inline float turnSpeed = 0.35F;         // fTurnSpeed - degrees per pixel of drag, 0.05 - 2.00
 
 	// [Controls]
