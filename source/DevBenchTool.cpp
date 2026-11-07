@@ -143,7 +143,7 @@ namespace DevBenchTool
 					{
 						if (_stricmp(r.label.c_str(), n.c_str()) == 0)
 						{
-							editor::NoteChosen(r.label, r.description, !r.other);
+							editor::NoteChosen(r.label, r.details.empty() ? r.description : r.description + "\n\n" + r.details, !r.other);
 							list = static_cast<long>(r.list);
 							index = static_cast<long>(r.index);
 							break;

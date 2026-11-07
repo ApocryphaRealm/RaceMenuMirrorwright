@@ -36,4 +36,7 @@ Written as changes happen, not reconstructed afterwards (rule 61). Each version 
 - No keyboard-navigation outline around the focused control; the white fill is the focus.
 - The race description panel follows keyboard and pad focus and DevBench choices, not only the mouse.
 - DevBench probes op=members and op=call, to read slider rows and RaceMenu's camera functions in the next run.
+- Group headers in each category, each in its own muted hue: Shape, Parts, Colours, Paint, More (from what each row does; switchable with bGroupHeaders). Colour rows show a swatch of their colour.
+- The race panel adds the live race record's starting Health / Magicka / Stamina, skill bonuses and spells by kind (abilities, powers, lesser powers, shouts, spells).
+- DevBench op=call and op=members accept CharGen.<function> for RaceMenu's Scaleform object.
 - Renamed RaceMenu Mirrorwright (working name Likeness): DLL, INI, log and translation files are RaceMenuMirrorwright.*, the DevBench tool is mirrorwright.control.

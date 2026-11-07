@@ -62,6 +62,9 @@ namespace bridge
 		float value = 0.0F, min = 0.0F, max = 1.0F, step = 0.01F;
 		float openValue = NAN;      // the value when the menu opened (for the changed count and reset)
 		bool engine = false;        // the callback is one of the game's own RaceSex Menu handlers
+		int tintType = -1;          // tintType member (colour / tint rows), -1 when none
+		bool colour = false;        // the row carries a fillColor (a colour row)
+		std::uint32_t fill = 0;     // fillColor as 0xRRGGBB
 	};
 
 	struct Race
@@ -73,6 +76,7 @@ namespace bridge
 		double raceID = -1;
 		bool other = false;         // filed under another mod's category (Apprentice classes/traits) - never a race change
 		std::string description;
+		std::string details;        // from the live race record: starting health / magicka / stamina, skill bonuses, spells by kind
 	};
 
 	struct Category

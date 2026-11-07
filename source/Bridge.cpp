@@ -268,6 +268,65 @@ namespace bridge
 			return a_label;
 		}
 
+		// The race panel's numbers and spells (SPEC 2.3), read from the live race record (so they are what the game applies,
+		// overrides included). The record is found by its name among the playable races; nothing is found for a choice.
+		std::string RaceDetails(const std::string& a_name)
+		{
+			auto* data = RE::TESDataHandler::GetSingleton();
+			if (!data) { return {}; }
+			RE::TESRace* race = nullptr;
+			for (auto* r : data->GetFormArray<RE::TESRace>())
+			{
+				if (r && r->GetPlayable() && a_name == r->GetFullName())
+				{
+					race = r;
+					break;
+				}
+			}
+			if (!race) { return {}; }
+			std::string out = std::format("Health {:g}   Magicka {:g}   Stamina {:g}", race->data.startingHealth, race->data.startingMagicka, race->data.startingStamina);
+			std::string skills;
+			auto* avs = RE::ActorValueList::GetSingleton();
+			for (const auto& boost : race->data.skillBoosts)
+			{
+				if (boost.bonus == 0 || boost.skill.get() == RE::ActorValue::kNone) { continue; }
+				const auto idx = static_cast<std::size_t>(boost.skill.get());
+				const auto* info = avs && idx < std::size(avs->actorValues) ? avs->actorValues[idx] : nullptr;   // both CommonLib lines have the array
+				const char* nm = info ? info->GetFullName() : nullptr;
+				skills += std::format("{}{} +{}", skills.empty() ? "" : ", ", nm && *nm ? nm : "?", boost.bonus);
+			}
+			if (!skills.empty()) { out += "\n" + skills; }
+			if (const auto* list = race->actorEffects)
+			{
+				std::string abilities, powers, lesser, spells, shouts;
+				for (std::uint32_t i = 0; i < list->numSpells; ++i)
+				{
+					const auto* sp = list->spells ? list->spells[i] : nullptr;
+					if (!sp || !sp->GetFullName() || !*sp->GetFullName()) { continue; }
+					std::string* bucket = &spells;
+					switch (sp->GetSpellType())
+					{
+					case RE::MagicSystem::SpellType::kAbility: bucket = &abilities; break;
+					case RE::MagicSystem::SpellType::kPower: bucket = &powers; break;
+					case RE::MagicSystem::SpellType::kLesserPower: bucket = &lesser; break;
+					default: break;
+					}
+					*bucket += std::format("{}{}", bucket->empty() ? "" : ", ", sp->GetFullName());
+				}
+				for (std::uint32_t i = 0; i < list->numShouts; ++i)
+				{
+					const auto* sh = list->shouts ? list->shouts[i] : nullptr;
+					if (sh && sh->GetFullName() && *sh->GetFullName()) { shouts += std::format("{}{}", shouts.empty() ? "" : ", ", sh->GetFullName()); }
+				}
+				if (!abilities.empty()) { out += "\nAbilities: " + abilities; }
+				if (!powers.empty()) { out += "\nPowers: " + powers; }
+				if (!lesser.empty()) { out += "\nLesser powers: " + lesser; }
+				if (!shouts.empty()) { out += "\nShouts: " + shouts; }
+				if (!spells.empty()) { out += "\nSpells: " + spells; }
+			}
+			return out;
+		}
+
 		bool IsSliderEntry(const Entry& a_e) { return Num(a_e, "sliderMin") && Num(a_e, "sliderMax") && Num(a_e, "position"); }
 
 		Model BuildModel(const std::vector<List>& a_lists, std::vector<std::string> a_engine, std::vector<std::string> a_functions)
@@ -338,6 +397,8 @@ namespace bridge
 						if (const double* id = Num(e, "sliderID")) { s.sliderID = *id; }
 						s.key = s.callback + "|" + (std::isnan(s.sliderID) ? e.label : std::format("{:g}", s.sliderID));
 						s.engine = std::binary_search(m.engineCallbacks.begin(), m.engineCallbacks.end(), s.callback);
+						if (const double* tt = Num(e, "tintType")) { s.tintType = static_cast<int>(*tt); }
+						if (const double* fc = Num(e, "fillColor")) { s.colour = true; s.fill = static_cast<std::uint32_t>(*fc) & 0xFFFFFF; }
 						m.sliders.push_back(std::move(s));
 						continue;
 					}
@@ -349,6 +410,7 @@ namespace bridge
 					r.flag = flag;
 					r.raceID = *Num(e, "raceID");
 					r.other = (flag & kCategoryRace) == 0;   // filed under another mod's category (Apprentice)
+					if (!r.other) { r.details = RaceDetails(e.label); }
 					if (const std::string* d = Str(e, "raceDescription")) { r.description = *d; }
 					else if (const std::string* d2 = Str(e, "description")) { r.description = *d2; }
 					m.races.push_back(std::move(r));
@@ -997,7 +1059,8 @@ namespace bridge
 	// DevBench probe: every member of an AS path with its type and value (objects one level deep as their member names).
 	std::string MembersJson(const std::string& a_path)
 	{
-		return OnUI([a_path]() -> std::string {
+		const std::string full = a_path.starts_with("CharGen") || a_path.starts_with("NiOverride") ? "_global.skse.plugins." + a_path : a_path;
+		return OnUI([a_path = full]() -> std::string {
 			RE::GFxMovieView* movie = Movie();
 			RE::GFxValue v;
 			if (!movie || !movie->GetVariable(&v, a_path.c_str())) { return std::format(R"({{"ok":false,"error":"{} not found"}})", Escape(a_path)); }
@@ -1016,7 +1079,8 @@ namespace bridge
 	// DevBench probe: call an AS function (path = owner.function) with number / string arguments and report the result.
 	std::string CallJson(const std::string& a_path, const std::vector<std::string>& a_args)
 	{
-		return OnUI([a_path, a_args]() -> std::string {
+		const std::string full = a_path.starts_with("CharGen.") || a_path.starts_with("NiOverride.") ? "_global.skse.plugins." + a_path : a_path;
+		return OnUI([a_path = full, a_args]() -> std::string {
 			RE::GFxMovieView* movie = Movie();
 			const auto dot = a_path.rfind('.');
 			RE::GFxValue owner;

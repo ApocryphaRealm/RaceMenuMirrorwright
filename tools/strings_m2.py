@@ -50,5 +50,10 @@ T2 = {
 "RMM_TurnLeft": ["Turn left", "向左转", "Otočit vlevo", "Tourner à gauche", "Nach links drehen", "Ruota a sinistra", "左に回す", "왼쪽으로 돌리기", "Obróć w lewo", "Повернуть влево", "Girar a la izquierda"],
 "RMM_TurnRight": ["Turn right", "向右转", "Otočit vpravo", "Tourner à droite", "Nach rechts drehen", "Ruota a destra", "右に回す", "오른쪽으로 돌리기", "Obróć w prawo", "Повернуть вправо", "Girar a la derecha"],
 "RMM_NoDescription": ["No description.", "无描述。", "Bez popisu.", "Aucune description.", "Keine Beschreibung.", "Nessuna descrizione.", "説明はありません。", "설명이 없습니다.", "Brak opisu.", "Нет описания.", "Sin descripción."],
+"RMM_GroupShape": ["Shape", "形状", "Tvar", "Forme", "Form", "Forma", "形", "모양", "Kształt", "Форма", "Forma"],
+"RMM_GroupParts": ["Parts", "部件", "Části", "Éléments", "Teile", "Parti", "パーツ", "부위", "Elementy", "Части", "Partes"],
+"RMM_GroupColours": ["Colours", "颜色", "Barvy", "Couleurs", "Farben", "Colori", "色", "색상", "Kolory", "Цвета", "Colores"],
+"RMM_GroupPaint": ["Paint", "彩绘", "Malba", "Peinture", "Bemalung", "Pittura", "ペイント", "페인트", "Malunek", "Раскраска", "Pintura"],
+"RMM_GroupMore": ["More", "其他", "Další", "Autres", "Weiteres", "Altro", "その他", "기타", "Więcej", "Прочее", "Más"],
 "RMM_RefreshPresets": ["Refresh the list", "刷新列表", "Obnovit seznam", "Actualiser la liste", "Liste aktualisieren", "Aggiorna l'elenco", "リストを更新", "목록 새로 고침", "Odśwież listę", "Обновить список", "Actualizar la lista"],
 }

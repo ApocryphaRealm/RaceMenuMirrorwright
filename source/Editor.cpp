@@ -159,7 +159,7 @@ namespace editor
 				"igIsKeyPressed_Bool", "igIsItemHovered", "igSetTooltipV", "igPushItemWidth", "igPopItemWidth",
 				"igOpenPopup_Str", "igBeginPopupModal", "igEndPopup", "igCloseCurrentPopup", "igSetItemDefaultFocus",
 				"igInputTextWithHint", "igBeginDisabled", "igEndDisabled", "igGetContentRegionAvail", "igBeginTable", "igTableNextColumn",
-				"igEndTable", "igIsWindowAppearing", "igIsItemFocused", "igPushStyleColor_Vec4", "igPopStyleColor", "igPushStyleVar_Float", "igPopStyleVar",
+				"igEndTable", "igIsWindowAppearing", "igTextColoredV", "igIsItemFocused", "igPushStyleColor_Vec4", "igPopStyleColor", "igPushStyleVar_Float", "igPopStyleVar",
 				"igSliderFloat", "igIsKeyDown_Nil", "igIsMouseDown_Nil", "igIsMouseClicked_Bool",
 				"igGetCursorScreenPos", "igGetWindowDrawList", "igGetFrameHeight", "igInvisibleButton", "igPushID_Str", "igPopID",
 				"ImDrawList_AddRectFilled", "ImDrawList_AddCircleFilled"
@@ -358,12 +358,53 @@ namespace editor
 			logger::debug("redo {} -> {:.3f}", c.callback, c.after);
 		}
 
+		// Groups of a category (M4), from what the row does (its game callback; the test run's rows carry no group of their own),
+		// each with its own muted hue.
+		int GroupOf(const bridge::Slider& a_s)
+		{
+			const std::string& c = a_s.callback;
+			if (c == "ChangeDoubleMorph" || c == "ChangeMorph" || c == "ChangeWeight") { return 0; }
+			if (c == "ChangeHeadPart" || c == "ChangeHeadPreset" || c == "ChangePreset" || c == "ChangeFaceDetails") { return 1; }
+			if (c == "ChangeTintingMask" || c == "ChangeMaskColor" || c == "ChangeHairColorPreset" || a_s.colour) { return 2; }
+			if (c == "ChangeMask") { return 3; }
+			return 4;   // RaceMenu plugin sliders and the rest
+		}
+
+		const char* GroupName(int a_group)
+		{
+			switch (a_group)
+			{
+			case 0: return NTR("RMM_GroupShape", "Shape");
+			case 1: return NTR("RMM_GroupParts", "Parts");
+			case 2: return NTR("RMM_GroupColours", "Colours");
+			case 3: return NTR("RMM_GroupPaint", "Paint");
+			default: return NTR("RMM_GroupMore", "More");
+			}
+		}
+
+		ImGuiMCP::ImVec4 GroupHue(int a_group)
+		{
+			static const ImGuiMCP::ImVec4 hues[] = { { 0.56F, 0.64F, 0.71F, 1.0F }, { 0.71F, 0.60F, 0.50F, 1.0F }, { 0.56F, 0.69F, 0.65F, 1.0F },
+				{ 0.66F, 0.62F, 0.75F, 1.0F }, { 0.64F, 0.70F, 0.57F, 1.0F } };
+			return hues[std::clamp(a_group, 0, 4)];
+		}
+
 		void SliderRow(const bridge::Slider& a_s)
 		{
 			ImGuiMCP::PushID(a_s.key.c_str());
 			float v = a_s.value;
 			const bool changed = !std::isnan(a_s.openValue) && a_s.value != a_s.openValue;
 			const std::string label = (changed ? "* " : "") + a_s.label;
+			if (a_s.colour)
+			{
+				const ImGuiMCP::ImVec4 c(((a_s.fill >> 16) & 0xFF) / 255.0F, ((a_s.fill >> 8) & 0xFF) / 255.0F, (a_s.fill & 0xFF) / 255.0F, 1.0F);
+				// a Font Awesome square in the row's colour (the icon font always has it)
+				static const bool haveFa = GetMenuFrameworkFunction<void*>("PushSolid") != nullptr;
+				if (haveFa) { FontAwesome::PushSolid(); }
+				ImGuiMCP::TextColored(c, "%s", Glyph(0xf0c8).c_str());
+				if (haveFa) { FontAwesome::Pop(); }
+				ImGuiMCP::SameLine();
+			}
 			ImGuiMCP::TextUnformatted(label.c_str());
 			if (settings::showInternalNames) { ImGuiMCP::TextDisabled("%s", a_s.callback.c_str()); }
 			const float lo = settings::allowPastRange ? std::min(a_s.min, a_s.max * -2.0F) : a_s.min;
@@ -403,7 +444,7 @@ namespace editor
 				if (ImGuiMCP::IsItemHovered() || ImGuiMCP::IsItemFocused())
 				{
 					g_panelTitle = r.label;
-					g_panelText = r.description;
+					g_panelText = r.details.empty() ? r.description : r.description + "\n\n" + r.details;
 				}
 				ImGuiMCP::PopID();
 			}
@@ -668,10 +709,19 @@ namespace editor
 						case RailItem::Kind::kSliders:
 							{
 								bool any = false;
-								for (const auto& s : a_s.model.sliders)
+								for (int g = 0; g < (settings::groupHeaders ? 5 : 1); ++g)
 								{
-									if (s.flag & item.flag)
+									bool header = false;
+									for (const auto& s : a_s.model.sliders)
 									{
+										if (!(s.flag & item.flag) || (settings::groupHeaders && GroupOf(s) != g)) { continue; }
+										if (settings::groupHeaders && !header)
+										{
+											ImGuiMCP::PushStyleColor(ImGuiMCP::ImGuiCol_Text, GroupHue(g));
+											ImGuiMCP::SeparatorText(GroupName(g));
+											ImGuiMCP::PopStyleColor(1);
+											header = true;
+										}
 										SliderRow(s);
 										any = true;
 									}
