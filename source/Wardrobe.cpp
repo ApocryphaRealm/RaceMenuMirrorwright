@@ -47,15 +47,12 @@ namespace wardrobe
 
 		// Why an armour must stay on, or nullptr when it may come off.
 		// Only body clothing / armour on slots 30-61, never slot 52 (TNG's genital slot by default), never anything of TNG's
-		// (its file, or a keyword from its file).
+		// (its own plugin).
 		const char* KeepReason(const RE::TESObjectARMO* a_armor)
 		{
 			if (!a_armor) { return "not an armour"; }
 			if (IsTngFile(a_armor->GetFile(0))) { return "from The New Gentleman's plugins"; }
-			for (const auto* kw : a_armor->GetKeywords())
-			{
-				if (kw && IsTngFile(kw->GetFile(0))) { return "carries a keyword of The New Gentleman"; }
-			}
+			// No keyword rule (run 19: TNG adds its keywords to ordinary clothing, so it kept nearly every body armour on).
 			const auto mask = static_cast<std::uint32_t>(a_armor->bipedModelData.bipedObjectSlots.underlying());   // both CommonLib lines
 			if (mask == 0) { return "no body slot"; }
 			if (mask & (1u << (52 - 30))) { return "uses slot 52 (TNG's genital slot)"; }
