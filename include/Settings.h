@@ -33,6 +33,7 @@ namespace settings
 
 	// [Advanced] - for the test run; CONFIRM IN THE TEST RUN (PLAN.md)
 	inline bool engineSliderCalls = true;   // bGameSliderCalls (was bEngineSliderCalls, renamed 2026-11-06 so an old 0 does not carry over) - pass a game-handled slider through the movie's GameDelegate
+	inline std::string raceRoute = "auto";  // sRaceRoute - how a race tile is pressed: auto | changerace | <clip path>. CONFIRM IN THE TEST RUN
 	inline std::string doneFunction;        // sDoneFunction - the AS function Done calls; empty = found by name at run time
 
 	// [Debug]

@@ -156,7 +156,7 @@ namespace editor
 				"igIsKeyPressed_Bool", "igIsItemHovered", "igSetTooltipV", "igPushItemWidth", "igPopItemWidth",
 				"igOpenPopup_Str", "igBeginPopupModal", "igEndPopup", "igCloseCurrentPopup", "igSetItemDefaultFocus",
 				"igInputTextWithHint", "igBeginDisabled", "igEndDisabled", "igGetContentRegionAvail", "igBeginTable", "igTableNextColumn",
-				"igEndTable", "igIsWindowAppearing", "igPushStyleColor_Vec4", "igPopStyleColor", "igPushStyleVar_Float", "igPopStyleVar",
+				"igEndTable", "igIsWindowAppearing", "igIsItemFocused", "igPushStyleColor_Vec4", "igPopStyleColor", "igPushStyleVar_Float", "igPopStyleVar",
 				"igSliderFloat", "igIsKeyDown_Nil", "igIsMouseDown_Nil", "igIsMouseClicked_Bool",
 				"igGetCursorScreenPos", "igGetWindowDrawList", "igGetFrameHeight", "igInvisibleButton", "igPushID_Str", "igPopID",
 				"ImDrawList_AddRectFilled", "ImDrawList_AddCircleFilled"
@@ -375,6 +375,9 @@ namespace editor
 			ImGuiMCP::PopID();
 		}
 
+		// The race panel (SPEC 2.3, first part): the description of the race or choice last hovered or chosen, below the grid.
+		std::string g_panelTitle, g_panelText;
+
 		void RaceGrid(const bridge::Snapshot& a_s, bool a_others, std::uint32_t a_flag)
 		{
 			const float avail = ImGuiMCP::GetContentRegionAvail().x;
@@ -391,10 +394,20 @@ namespace editor
 					bridge::ChooseEntry(r.list, r.index);
 					g_message = std::format("{} {}", NTR("RMM_Chose", "Chosen:"), r.label);
 				}
-				if (!r.description.empty() && ImGuiMCP::IsItemHovered()) { ImGuiMCP::SetTooltip("%s", r.description.c_str()); }
+				if (ImGuiMCP::IsItemHovered() || ImGuiMCP::IsItemFocused())
+				{
+					g_panelTitle = r.label;
+					g_panelText = r.description;
+				}
 				ImGuiMCP::PopID();
 			}
 			ImGuiMCP::EndTable();
+			if (!g_panelTitle.empty())
+			{
+				ImGuiMCP::SeparatorText(g_panelTitle.c_str());
+				if (g_panelText.empty()) { ImGuiMCP::TextDisabled("%s", NTR("RMM_NoDescription", "No description.")); }
+				else { ImGuiMCP::TextWrapped("%s", g_panelText.c_str()); }
+			}
 		}
 
 		void DiscoveryView(const bridge::Snapshot& a_s)

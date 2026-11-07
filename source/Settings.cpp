@@ -122,6 +122,7 @@ namespace settings
 					continue;
 				}
 				if (section == "advanced" && key == "sdonefunction") { doneFunction = value; known = true; }
+				if (section == "advanced" && key == "sraceroute") { raceRoute = value.empty() ? "auto" : value; known = true; }
 				if (!known) { logger::debug("INI key [{}] {} is not one of ours; left alone", section, key); }
 			}
 			logger::info("settings read from {}", iniPath);
@@ -192,6 +193,7 @@ namespace settings
 		for (const auto& k : Bools()) { WriteKey(lines, k.section, k.key, *k.target ? "1" : "0"); }
 		for (const auto& k : Floats()) { WriteKey(lines, k.section, k.key, std::format("{:.2f}", *k.target)); }
 		WriteKey(lines, "Advanced", "sDoneFunction", doneFunction);
+		WriteKey(lines, "Advanced", "sRaceRoute", raceRoute);
 		for (const auto& k : UInts()) { WriteKey(lines, k.section, k.key, k.hex ? std::format("0x{:02X}", *k.target) : std::to_string(*k.target)); }
 
 		std::ofstream out(iniPath, std::ios::trunc);
@@ -209,6 +211,7 @@ namespace settings
 	{
 		for (const auto& k : Bools()) { *k.target = k.def; }
 		doneFunction.clear();
+		raceRoute = "auto";
 		for (const auto& k : Floats()) { *k.target = k.def; }
 		for (const auto& k : UInts())
 		{

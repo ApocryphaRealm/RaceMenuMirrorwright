@@ -49,5 +49,6 @@ T2 = {
 "RMM_PresetDeleteFailed": ["The preset could not be deleted. See the log.", "无法删除预设。请查看日志。", "Předvolbu se nepodařilo smazat. Viz log.", "Le préréglage n'a pas pu être supprimé. Voir le journal.", "Die Vorlage konnte nicht gelöscht werden. Siehe Log.", "Impossibile eliminare il preset. Vedi il log.", "プリセットを削除できませんでした。ログを確認してください。", "프리셋을 삭제할 수 없습니다. 로그를 확인하세요.", "Nie udało się usunąć ustawienia. Zobacz log.", "Не удалось удалить пресет. См. журнал.", "No se pudo eliminar el preajuste. Mira el registro."],
 "RMM_TurnLeft": ["Turn left", "向左转", "Otočit vlevo", "Tourner à gauche", "Nach links drehen", "Ruota a sinistra", "左に回す", "왼쪽으로 돌리기", "Obróć w lewo", "Повернуть влево", "Girar a la izquierda"],
 "RMM_TurnRight": ["Turn right", "向右转", "Otočit vpravo", "Tourner à droite", "Nach rechts drehen", "Ruota a destra", "右に回す", "오른쪽으로 돌리기", "Obróć w prawo", "Повернуть вправо", "Girar a la derecha"],
+"RMM_NoDescription": ["No description.", "无描述。", "Bez popisu.", "Aucune description.", "Keine Beschreibung.", "Nessuna descrizione.", "説明はありません。", "설명이 없습니다.", "Brak opisu.", "Нет описания.", "Sin descripción."],
 "RMM_RefreshPresets": ["Refresh the list", "刷新列表", "Obnovit seznam", "Actualiser la liste", "Liste aktualisieren", "Aggiorna l'elenco", "リストを更新", "목록 새로 고침", "Odśwież listę", "Обновить список", "Actualizar la lista"],
 }

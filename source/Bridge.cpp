@@ -726,11 +726,11 @@ namespace bridge
 		else { g_sliderTaskQueued = false; }
 	}
 
-	void ChooseEntry(std::uint32_t a_list, std::uint32_t a_index)
+	void ChooseEntry(std::uint32_t a_list, std::uint32_t a_index, const std::string& a_route)
 	{
 		auto* tasks = SKSE::GetTaskInterface();
 		if (!tasks || !g_menuOpen) { return; }
-		tasks->AddUITask([a_list, a_index]() {
+		tasks->AddUITask([a_list, a_index, a_route]() {
 			RE::GFxMovieView* movie = Movie();
 			if (!movie) { return; }
 			const Snapshot snap = Copy();
@@ -749,10 +749,19 @@ namespace bridge
 			// A real race: the game's own ChangeRace handler, through the movie's GameDelegate, with the entry's raceID - the call
 			// the race list makes (test run 4: onItemPress with the unfiltered index changed nothing). Another mod's choice
 			// (Apprentice) must never reach ChangeRace (past mistake 2026-10-04): it goes to onItemPress below.
+			{
+				RE::GFxValue rid, fidx, iidx;
+				element.GetMember("raceID", &rid);
+				element.GetMember("filteredIndex", &fidx);
+				element.GetMember("itemIndex", &iidx);
+				logger::info("choose: {}[{}] raceID={} filteredIndex={} itemIndex={} route='{}'", path, a_index, rid.IsNumber() ? rid.GetNumber() : -1.0,
+					fidx.IsNumber() ? fidx.GetNumber() : -1.0, iidx.IsNumber() ? iidx.GetNumber() : -1.0, a_route.empty() ? settings::raceRoute : a_route);
+			}
+			const std::string route = a_route.empty() ? settings::raceRoute : a_route;
 			RE::GFxValue raceID, flagV;
 			const bool hasRace = element.GetMember("raceID", &raceID) && raceID.IsNumber();
 			const bool raceFlag = element.GetMember("filterFlag", &flagV) && flagV.IsNumber() && (static_cast<std::uint32_t>(flagV.GetNumber()) & kCategoryRace) != 0;
-			if (hasRace && raceFlag)
+			if (hasRace && raceFlag && route == "changerace")
 			{
 				RE::GFxValue delegate;
 				if (movie->GetVariable(&delegate, "_global.gfx.io.GameDelegate") && delegate.IsObject())
@@ -772,16 +781,20 @@ namespace bridge
 			// is the entry's own itemIndex when it has one (the unfiltered position otherwise).
 			RE::GFxValue itemIndex;
 			const double pressIndex = element.GetMember("itemIndex", &itemIndex) && itemIndex.IsNumber() ? itemIndex.GetNumber() : static_cast<double>(a_index);
+			// Run 5: the list clip's own onItemPress (CLIK's, which expects a clip event) changed nothing. RaceMenu's handler is the
+			// panels clip's (RaceMenuBase.psc's documented root; Apprentice replaces that one too), so it is tried first.
 			std::vector<std::string> owners;
+			if (!route.empty() && route != "auto" && route != "changerace") { owners.push_back(route); }
+			owners.emplace_back(kMenuRoot);
+			owners.emplace_back(std::string(kMenuRoot) + ".racePanel");
 			std::string p = path;
-			for (int up = 0; up < 3; ++up)
+			for (int up = 0; up < 2; ++up)
 			{
 				const auto dot = p.rfind('.');
 				if (dot == std::string::npos) { break; }
 				p = p.substr(0, dot);
 				owners.push_back(p);
 			}
-			owners.emplace_back(kMenuRoot);
 			for (const auto& owner : owners)
 			{
 				RE::GFxValue clip, fn;

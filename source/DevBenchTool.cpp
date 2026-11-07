@@ -155,7 +155,7 @@ namespace DevBenchTool
 				else
 				{
 					const auto before = bridge::Copy().serial;
-					bridge::ChooseEntry(static_cast<std::uint32_t>(*list), static_cast<std::uint32_t>(*index));
+					bridge::ChooseEntry(static_cast<std::uint32_t>(*list), static_cast<std::uint32_t>(*index), StringFrom(args, "route"));
 					out = WaitForChange(before, 3000);
 				}
 			}
@@ -213,7 +213,7 @@ namespace DevBenchTool
 			"onItemPress owner, the Done function, panels hidden) and every list found in the movie. op=probe: read RaceMenu again. op=list list=<i> from count: a "
 			"list's entries with their strings and numbers. op=plugins: _global.skse.plugins members and the game's own handlers for the menu. op=model from count: "
 			"categories, races, sliders (callback, value, range, open value, engine), function members. op=slider key=<slider key from op=model> value=<n>: move a slider as the "
-			"editor does. op=choose name=<race or choice> (or list=<i> index=<n>): press it through onItemPress. op=confirm / op=cancel: answer the open question (Done, Reset, Load...). op=category index=<n>: pick a rail entry. op=done: press "
+			"editor does. op=choose name=<race or choice> (or list=<i> index=<n>) [route=auto|changerace|<clip path>]: press it (the log names raceID, filteredIndex, itemIndex and the owner used). op=confirm / op=cancel: answer the open question (Done, Reset, Load...). op=category index=<n>: pick a rail entry. op=done: press "
 			"Done. op=presets: the preset folder and files. op=show / op=hide / op=switch: the editor window. op=reload: re-read the INI.\","
 			"\"inputSchema\":{\"type\":\"object\",\"properties\":{\"op\":{\"type\":\"string\"},\"list\":{\"type\":\"integer\"},\"index\":{\"type\":\"integer\"},"
 			"\"from\":{\"type\":\"integer\"},\"count\":{\"type\":\"integer\"},\"callback\":{\"type\":\"string\"},\"value\":{\"type\":\"number\"}},\"additionalProperties\":true},"

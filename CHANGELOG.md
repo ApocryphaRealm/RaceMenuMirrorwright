@@ -30,4 +30,6 @@ Written as changes happen, not reconstructed afterwards (rule 61). Each version 
 - Apprentice's Class and Trait categories sit directly after Race in the rail, labelled Class and Trait; any all-capitals category name shows in title case.
 - Turning by dragging the mouse on the open space over the character, beside the stick, Q / E and the Turn buttons - all the editor's own rotation.
 - Every confirmation box (Done, Reset, Load, replace, delete) draws its two choices as filled boxes: grey with light text, the focused one white with dark text. Focus starts on the confirming choice; Left / Right, the D-pad and Tab move it, the mouse focuses what it hovers; Enter / Space / A take the focused choice, Esc / B cancel.
+- A race tile is pressed through RaceMenu's own item-press handler on its panels clip first (run 5: the game's ChangeRace with the race's ID reloaded the sliders on top of the old ones and left the character as it was); sRaceRoute in the INI and route= in DevBench choose the route while it is confirmed. The log names each entry's raceID, filteredIndex and itemIndex.
+- Below the race and choice grids, the description of the race or choice last hovered or focused.
 - Renamed RaceMenu Mirrorwright (working name Likeness): DLL, INI, log and translation files are RaceMenuMirrorwright.*, the DevBench tool is mirrorwright.control.
