@@ -15,6 +15,7 @@
 #include "utils/Toggle.h"
 
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -170,6 +171,63 @@ namespace editor
 			ImGuiMCP::SameLine();
 			ImGuiMCP::TextDisabled("%s", strings::TR("RMM_HelpMark", "(?)"));
 			if (ImGuiMCP::IsItemHovered()) { ImGuiMCP::SetTooltip("%s", a_text); }
+		}
+
+		// Font Awesome (the owner, 2026-11-06: "Don't forget to use font awesome"), drawn through AMF's own icon font the way our
+		// other AMF pages do: the glyph in the icon font, then the label in the page's font, so every language keeps its text.
+		// Without the framework's PushSolid export the icons are simply left out.
+		namespace fa
+		{
+			inline constexpr unsigned kRace = 0xf0c0, kBody = 0xf183, kHead = 0xf007, kFace = 0xf118, kEyes = 0xf06e, kBrow = 0xf11a, kMouth = 0xf580,
+									  kHair = 0xf0c4, kExtra = 0xf1de, kPaint = 0xf1fc, kOther = 0xf192, kChoices = 0xf03a, kDiscovery = 0xf188,
+									  kUndo = 0xf0e2, kRedo = 0xf01e, kReset = 0xf2ea, kDone = 0xf00c, kLoad = 0xf07c, kSave = 0xf0c7, kDelete = 0xf1f8,
+									  kRefresh = 0xf021, kLight = 0xf0eb, kSearch = 0xf002, kSwitch = 0xf362, kTurnLeft = 0xf2ea, kTurnRight = 0xf2f9;
+		}
+
+		const std::string& Glyph(unsigned a_cp)
+		{
+			static std::unordered_map<unsigned, std::string> cache;
+			auto it = cache.find(a_cp);
+			if (it == cache.end()) { it = cache.emplace(a_cp, FontAwesome::UnicodeToUtf8(a_cp)).first; }
+			return it->second;
+		}
+
+		void Icon(unsigned a_cp)
+		{
+			static const bool have = GetMenuFrameworkFunction<void*>("PushSolid") && GetMenuFrameworkFunction<void*>("Pop");
+			if (!have) { return; }
+			FontAwesome::PushSolid();
+			ImGuiMCP::TextUnformatted(Glyph(a_cp).c_str());
+			FontAwesome::Pop();
+			ImGuiMCP::SameLine();
+		}
+
+		// An icon, then a button with the label.
+		bool IconButton(unsigned a_cp, const char* a_label)
+		{
+			Icon(a_cp);
+			return ImGuiMCP::Button(a_label);
+		}
+
+		unsigned CategoryIcon(std::uint32_t a_flag, const std::string& a_label)
+		{
+			switch (a_flag)
+			{
+			case 2: return fa::kRace;
+			case 4: return fa::kBody;
+			case 8: return fa::kHead;
+			case 16: return fa::kFace;
+			case 32: return fa::kEyes;
+			case 64: return fa::kBrow;
+			case 128: return fa::kMouth;
+			case 256: return fa::kHair;
+			case 512: return fa::kExtra;
+			default: break;
+			}
+			std::string up = a_label;
+			for (char& c : up) { c = static_cast<char>(std::toupper(static_cast<unsigned char>(c))); }
+			if (up.find("PAINT") != std::string::npos || up.find("MAKEUP") != std::string::npos || up.find("COLOR") != std::string::npos) { return fa::kPaint; }
+			return fa::kOther;
 		}
 
 		std::string ShortName(const std::string& a_path)
@@ -407,7 +465,8 @@ namespace editor
 					Optional("igSetKeyboardFocusHere", []() { ImGuiMCP::SetKeyboardFocusHere(0); });
 					g_focusSearch = false;
 				}
-				ImGuiMCP::PushItemWidth(a_width * 0.55F);
+				Icon(fa::kSearch);
+				ImGuiMCP::PushItemWidth(a_width * 0.50F);
 				ImGuiMCP::InputTextWithHint("##search", NTR("RMM_SearchHint", "Search every slider (Ctrl+F)"), g_search, sizeof(g_search));
 				ImGuiMCP::PopItemWidth();
 				const auto changed = std::count_if(a_s.model.sliders.begin(), a_s.model.sliders.end(),
@@ -415,7 +474,7 @@ namespace editor
 				ImGuiMCP::SameLine();
 				ImGuiMCP::TextDisabled("%s", std::format("{} {}", changed, NTR("RMM_Changed", "changed")).c_str());
 				ImGuiMCP::SameLine();
-				if (ImGuiMCP::Button(NTR("RMM_ToRaceMenu", "RaceMenu's interface"))) { SetShown(false, "button"); }
+				if (IconButton(fa::kSwitch, NTR("RMM_ToRaceMenu", "RaceMenu's interface"))) { SetShown(false, "button"); }
 				if (ImGuiMCP::IsItemHovered()) { ImGuiMCP::SetTooltip("%s", NTR("RMM_HelpToRaceMenu", "Hides {name} and leaves RaceMenu's own interface. The switch key (F4) brings {name} back.")); }
 				ImGuiMCP::Separator();
 
@@ -439,7 +498,9 @@ namespace editor
 				{
 					for (int i = 0; i < static_cast<int>(rail.size()); ++i)
 					{
-						const std::string label = rail[static_cast<std::size_t>(i)].label + "##rail" + std::to_string(i);
+						const auto& item = rail[static_cast<std::size_t>(i)];
+						Icon(item.kind == RailItem::Kind::kDiscovery ? fa::kDiscovery : item.kind == RailItem::Kind::kChoices ? fa::kChoices : CategoryIcon(item.flag, item.label));
+						const std::string label = item.label + "##rail" + std::to_string(i);
 						if (ImGuiMCP::Selectable(label.c_str(), !searching && i == category))
 						{
 							category = i;
@@ -507,18 +568,18 @@ namespace editor
 
 				// Footer: Undo, Redo, Reset, Done.
 				ImGuiMCP::BeginDisabled(g_undo.empty());
-				if (ImGuiMCP::Button(NTR("RMM_Undo", "Undo"))) { Undo(); }
+				if (IconButton(fa::kUndo, NTR("RMM_Undo", "Undo"))) { Undo(); }
 				ImGuiMCP::EndDisabled();
 				ImGuiMCP::SameLine();
 				ImGuiMCP::BeginDisabled(g_redo.empty());
-				if (ImGuiMCP::Button(NTR("RMM_Redo", "Redo"))) { Redo(); }
+				if (IconButton(fa::kRedo, NTR("RMM_Redo", "Redo"))) { Redo(); }
 				ImGuiMCP::EndDisabled();
 				ImGuiMCP::SameLine();
 				ImGuiMCP::BeginDisabled(changed == 0);
-				if (ImGuiMCP::Button(NTR("RMM_Reset", "Reset"))) { ImGuiMCP::OpenPopup("##confirmReset"); }
+				if (IconButton(fa::kReset, NTR("RMM_Reset", "Reset"))) { ImGuiMCP::OpenPopup("##confirmReset"); }
 				ImGuiMCP::EndDisabled();
 				ImGuiMCP::SameLine();
-				if (ImGuiMCP::Button(NTR("RMM_Done", "Done")) || g_finishRequested.exchange(false))
+				if (IconButton(fa::kDone, NTR("RMM_Done", "Done")) || g_finishRequested.exchange(false))
 				{
 					if (settings::askBeforeDone) { ImGuiMCP::OpenPopup("##confirmDone"); }
 					else { DoFinish(); }
@@ -550,15 +611,15 @@ namespace editor
 			if (ImGuiMCP::Begin(title.c_str(), nullptr, flags))
 			{
 				ImGuiMCP::SetWindowFontScale(std::clamp(settings::scale, 0.5F, 2.0F));
-				if (ImGuiMCP::Button(NTR("RMM_Light", "Light")))
+				if (IconButton(fa::kLight, NTR("RMM_Light", "Light")))
 				{
 					// RaceMenu's documented RSM_ToggleLight event (RaceMenu.psc OnToggleLight).
 					bridge::ToggleLight();
 				}
 				ImGuiMCP::SameLine();
-				if (ImGuiMCP::Button(NTR("RMM_TurnLeft", "Turn left"))) { bridge::TurnBy(-15.0F); }
+				if (IconButton(fa::kTurnLeft, NTR("RMM_TurnLeft", "Turn left"))) { bridge::TurnBy(-15.0F); }
 				ImGuiMCP::SameLine();
-				if (ImGuiMCP::Button(NTR("RMM_TurnRight", "Turn right"))) { bridge::TurnBy(15.0F); }
+				if (IconButton(fa::kTurnRight, NTR("RMM_TurnRight", "Turn right"))) { bridge::TurnBy(15.0F); }
 				ImGuiMCP::SeparatorText(NTR("RMM_Presets", "Presets"));
 				if (g_presetsDirty)
 				{
@@ -592,11 +653,11 @@ namespace editor
 
 				const bool haveSel = g_selectedPreset >= 0 && g_selectedPreset < static_cast<int>(g_presets.size()) && g_presets[static_cast<std::size_t>(g_selectedPreset)].loadable;
 				ImGuiMCP::BeginDisabled(!haveSel);
-				if (ImGuiMCP::Button(NTR("RMM_Load", "Load"))) { ImGuiMCP::OpenPopup("##confirmLoad"); }
+				if (IconButton(fa::kLoad, NTR("RMM_Load", "Load"))) { ImGuiMCP::OpenPopup("##confirmLoad"); }
 				ImGuiMCP::EndDisabled();
 				ImGuiMCP::SameLine();
 				ImGuiMCP::BeginDisabled(g_presetName[0] == '\0');
-				if (ImGuiMCP::Button(NTR("RMM_SavePreset", "Save")))
+				if (IconButton(fa::kSave, NTR("RMM_SavePreset", "Save")))
 				{
 					if (presets::Exists(g_presetName)) { ImGuiMCP::OpenPopup("##confirmOverwrite"); }
 					else
@@ -608,7 +669,7 @@ namespace editor
 				ImGuiMCP::EndDisabled();
 				ImGuiMCP::SameLine();
 				ImGuiMCP::BeginDisabled(g_selectedPreset < 0 || g_selectedPreset >= static_cast<int>(g_presets.size()));
-				if (ImGuiMCP::Button(NTR("RMM_Delete", "Delete"))) { ImGuiMCP::OpenPopup("##confirmDelete"); }
+				if (IconButton(fa::kDelete, NTR("RMM_Delete", "Delete"))) { ImGuiMCP::OpenPopup("##confirmDelete"); }
 				ImGuiMCP::EndDisabled();
 				ImGuiMCP::TextWrapped("%s", g_message.c_str());
 
@@ -630,7 +691,7 @@ namespace editor
 					g_selectedPreset = -1;
 					g_presetsDirty = true;
 				}
-				if (ImGuiMCP::Button(NTR("RMM_RefreshPresets", "Refresh the list"))) { g_presetsDirty = true; }
+				if (IconButton(fa::kRefresh, NTR("RMM_RefreshPresets", "Refresh the list"))) { g_presetsDirty = true; }
 			}
 			ImGuiMCP::End();
 		}
