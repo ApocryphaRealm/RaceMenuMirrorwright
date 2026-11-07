@@ -7,6 +7,7 @@
 #include "Editor.h"
 #include "Name.h"
 #include "Settings.h"
+#include "Wardrobe.h"
 
 #include "utils/AddressLibraryGuard.h"
 #include "utils/Logger.h"
@@ -27,6 +28,10 @@ namespace
 			editor::Register();
 			bridge::Install();
 			DevBenchTool::Init(true);
+			break;
+		case SKSE::MessagingInterface::kPreLoadGame:
+		case SKSE::MessagingInterface::kNewGame:
+			wardrobe::Dress("game load");   // never leave a game with the clothes the editor took off
 			break;
 		default:
 			break;

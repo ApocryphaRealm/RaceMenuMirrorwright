@@ -9,6 +9,7 @@
 #include "PreciseSlider.h"
 #include "Presets.h"
 #include "Settings.h"
+#include "Wardrobe.h"
 
 #include "utils/Logger.h"
 #include "utils/Strings.h"
@@ -194,7 +195,7 @@ namespace editor
 			inline constexpr unsigned kRace = 0xf0c0, kBody = 0xf183, kHead = 0xf007, kFace = 0xf118, kEyes = 0xf06e, kBrow = 0xf11a, kMouth = 0xf580,
 									  kHair = 0xf0c4, kExtra = 0xf1de, kPaint = 0xf1fc, kOther = 0xf192, kChoices = 0xf03a, kDiscovery = 0xf188,
 									  kUndo = 0xf0e2, kRedo = 0xf01e, kReset = 0xf2ea, kDone = 0xf00c, kLoad = 0xf07c, kSave = 0xf0c7, kDelete = 0xf1f8,
-									  kRefresh = 0xf021, kLight = 0xf0eb, kSearch = 0xf002, kSwitch = 0xf362, kTurnLeft = 0xf2ea, kTurnRight = 0xf2f9, kCloseUp = 0xf00e;
+									  kRefresh = 0xf021, kLight = 0xf0eb, kSearch = 0xf002, kSwitch = 0xf362, kTurnLeft = 0xf2ea, kTurnRight = 0xf2f9, kCloseUp = 0xf00e, kShirt = 0xf553;
 		}
 
 		const std::string& Glyph(unsigned a_cp)
@@ -761,6 +762,7 @@ namespace editor
 		void DoFinish()
 		{
 			logger::info("Done confirmed");
+			wardrobe::Dress("Done");
 			if (bridge::Finish())
 			{
 				// The game now asks its own questions ("Finish and name your character?", the name box): the editor hides and gives
@@ -1048,6 +1050,12 @@ namespace editor
 				}
 				// The game's own zoom (run 11); the label follows its state.
 				if (IconButton(fa::kCloseUp, bridge::IsZoomedIn() ? NTR("RMM_ZoomOut", "Zoom out") : NTR("RMM_CloseUp", "Close-up"))) { bridge::ToggleCloseUp(); }
+				// The undress toggle (M5): the editor's own, never saved; everything goes back on at Done, close or load.
+				if (IconButton(fa::kShirt, wardrobe::IsUndressed() ? NTR("RMM_Dress", "Dress") : NTR("RMM_Undress", "Undress")))
+				{
+					if (wardrobe::IsUndressed()) { wardrobe::Dress("button"); }
+					else { wardrobe::Undress(); }
+				}
 				if (IconButton(fa::kTurnLeft, NTR("RMM_TurnLeft", "Turn left"))) { bridge::TurnBy(-15.0F); }
 				if (IconButton(fa::kTurnRight, NTR("RMM_TurnRight", "Turn right"))) { bridge::TurnBy(15.0F); }
 				FlowEnd();
@@ -1351,6 +1359,7 @@ namespace editor
 
 	void OnRaceMenuClosed()
 	{
+		wardrobe::Dress("RaceMenu closed");
 		g_showWhenConsoleCloses = false;
 		g_showWhenBoxCloses = false;
 		g_finishing = false;

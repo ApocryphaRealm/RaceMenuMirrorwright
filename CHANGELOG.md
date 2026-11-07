@@ -61,4 +61,6 @@ Written as changes happen, not reconstructed afterwards (rule 61). Each version 
 - DevBench op=call refuses RaceMenu plugin functions other than argument-less getters (a bad call to CharGen.SavePreset crashed the game in run 15); op=spy logs RaceMenu's own calls to its preset and export functions with their arguments.
 - Every pad key edge the editor sees through the framework, and every XInput R3 edge, is logged at debug level with the frame and how many frames since the editor took the focus; an R3 edge that is ignored says why.
 - Discovery > "Record RaceMenu's calls" arms the same recording as DevBench op=spy, for a player sending a bug report.
+- Undress / Dress button in the scene panel (and DevBench op=undress / op=dress): takes off every armour the player wears, quietly, and puts exactly those back on the second press, on Done, when RaceMenu closes and on a game load; never saved, TNG untouched.
+- DevBench op=pose event=<animation event>: sends one event to the player and reports whether the animation graph took it (does the menu's character animate at all).
 - Renamed RaceMenu Mirrorwright (working name Likeness): DLL, INI, log and translation files are RaceMenuMirrorwright.*, the DevBench tool is mirrorwright.control.
