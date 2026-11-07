@@ -1,4 +1,4 @@
-#include "PCH.h"
+﻿#include "PCH.h"
 
 #include "Editor.h"
 
@@ -47,6 +47,11 @@ namespace editor
 		std::atomic<int> g_category{ 0 };       // rail index
 		std::atomic<bool> g_finishRequested{ false };
 		std::atomic<bool> g_showWhenConsoleCloses{ false };
+		std::atomic<int> g_toolAnswer{ 0 };      // 1 confirm, 2 cancel: DevBench's answer to the open question
+		std::atomic<bool> g_questionOpen{ false };
+		std::string g_questionId;               // guarded by g_whyLock
+		std::mutex g_toolSliderLock;
+		std::vector<std::pair<std::string, float>> g_toolSliders;   // guarded by g_toolSliderLock: DevBench slider changes for the render thread
 		std::string g_pendingCategory;          // guarded by g_whyLock: a rail entry asked for by name (DevBench)
 		std::atomic<std::uint32_t> g_closeUps{ 0 };
 		std::string g_lastWhy;
@@ -149,7 +154,7 @@ namespace editor
 				"igIsKeyPressed_Bool", "igIsItemHovered", "igSetTooltipV", "igPushItemWidth", "igPopItemWidth",
 				"igOpenPopup_Str", "igBeginPopupModal", "igEndPopup", "igCloseCurrentPopup", "igSetItemDefaultFocus",
 				"igInputTextWithHint", "igBeginDisabled", "igEndDisabled", "igGetContentRegionAvail", "igBeginTable", "igTableNextColumn",
-				"igEndTable",
+				"igEndTable", "igIsWindowAppearing",
 				"igSliderFloat", "igIsKeyDown_Nil", "igIsMouseDown_Nil",
 				"igGetCursorScreenPos", "igGetWindowDrawList", "igGetFrameHeight", "igInvisibleButton", "igPushID_Str", "igPopID",
 				"ImDrawList_AddRectFilled", "ImDrawList_AddCircleFilled"
@@ -403,16 +408,35 @@ namespace editor
 			bool yes = false;
 			if (ImGuiMCP::BeginPopupModal(a_id, nullptr, ImGuiMCP::ImGuiWindowFlags_AlwaysAutoResize))
 			{
+				g_questionOpen = true;
+				{
+					std::scoped_lock guard(g_whyLock);
+					g_questionId = a_id;
+				}
 				ImGuiMCP::TextUnformatted(a_text);
 				ImGuiMCP::Spacing();
-				if (ImGuiMCP::Button(a_yes))
+				// The press that opened the box (R, X, the button) must not answer it: keys count from the second frame.
+				const bool appearing = ImGuiMCP::IsWindowAppearing();
+				using namespace ImGuiMCP;
+				const bool keyYes = !appearing && (IsKeyPressed(ImGuiKey_Enter, false) || IsKeyPressed(ImGuiKey_KeypadEnter, false) ||
+													  IsKeyPressed(ImGuiKey_Space, false) || IsKeyPressed(ImGuiKey_GamepadFaceDown, false));
+				const bool keyNo = !appearing && (IsKeyPressed(ImGuiKey_Escape, false) || IsKeyPressed(ImGuiKey_GamepadFaceRight, false));
+				const int tool = g_toolAnswer.exchange(0);
+				if (ImGuiMCP::Button(a_yes) || keyYes || tool == 1)
 				{
 					yes = true;
+					logger::info("question {}: answered yes ({})", a_id, tool == 1 ? "devbench" : keyYes ? "key" : "button");
 					ImGuiMCP::CloseCurrentPopup();
+					g_questionOpen = false;
 				}
 				ImGuiMCP::SetItemDefaultFocus();   // from the pad, the confirming button already has the focus (SPEC 8)
 				ImGuiMCP::SameLine();
-				if (ImGuiMCP::Button(NTR("RMM_Cancel", "Cancel")) || ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_Escape, false)) { ImGuiMCP::CloseCurrentPopup(); }
+				if (!yes && (ImGuiMCP::Button(NTR("RMM_Cancel", "Cancel")) || keyNo || tool == 2))
+				{
+					logger::info("question {}: cancelled ({})", a_id, tool == 2 ? "devbench" : keyNo ? "key" : "button");
+					ImGuiMCP::CloseCurrentPopup();
+					g_questionOpen = false;
+				}
 				ImGuiMCP::EndPopup();
 			}
 			return yes;
@@ -705,6 +729,24 @@ namespace editor
 			static std::uint64_t serial = ~0ull;
 			bridge::CopyIfChanged(serial, snap);
 			++g_framesDrawn;
+			{
+				std::vector<std::pair<std::string, float>> pending;
+				{
+					std::scoped_lock guard(g_toolSliderLock);
+					pending.swap(g_toolSliders);
+				}
+				for (const auto& [key, value] : pending)
+				{
+					const auto it = std::find_if(snap.model.sliders.begin(), snap.model.sliders.end(), [&](const bridge::Slider& s) { return s.key == key; });
+					if (it == snap.model.sliders.end())
+					{
+						logger::warn("devbench slider: no slider with key '{}'", key);
+						continue;
+					}
+					Apply(key, it->value, value, true);
+					g_undo.back().at = 0;   // each tool change is its own undo step
+				}
+			}
 
 			auto* io = ImGuiMCP::GetIO();
 			const float displayW = io ? io->DisplaySize.x : 1920.0F;
@@ -875,6 +917,14 @@ namespace editor
 		if (g_showWhenConsoleCloses.exchange(false)) { SetShown(true, "console closed"); }
 	}
 
+	void ToolSlider(const std::string& a_key, float a_value)
+	{
+		std::scoped_lock guard(g_toolSliderLock);
+		g_toolSliders.emplace_back(a_key, a_value);
+	}
+
+	void ToolAnswer(bool a_yes) { g_toolAnswer = a_yes ? 1 : 2; }
+
 	void SelectCategoryByName(const std::string& a_name)
 	{
 		std::scoped_lock guard(g_whyLock);
@@ -910,8 +960,13 @@ namespace editor
 			std::scoped_lock guard(g_whyLock);
 			why = g_lastWhy;
 		}
-		return std::format(R"({{"available":{},"shown":{},"lastWhy":"{}","switches":{},"framesDrawn":{},"category":{},"enabled":{},"startInEditor":{},"switchKey":{}}})",
+		std::string question;
+		{
+			std::scoped_lock guard(g_whyLock);
+			question = g_questionOpen ? g_questionId : std::string();
+		}
+		return std::format(R"({{"available":{},"shown":{},"lastWhy":"{}","switches":{},"framesDrawn":{},"category":{},"enabled":{},"startInEditor":{},"switchKey":{},"question":"{}"}})",
 			g_available.load(), IsShown(), bridge::Escape(why), g_switchCount.load(), g_framesDrawn.load(), g_category.load(), settings::enabled, settings::startInEditor,
-			settings::switchKey);
+			settings::switchKey, bridge::Escape(question));
 	}
 }

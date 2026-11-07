@@ -26,6 +26,9 @@ namespace editor
 	void SelectCategory(int a_index);
 	void SelectCategoryByName(const std::string& a_name);   // applied at the next frame
 	void OnConsoleClosed();
+	// DevBench: a slider change through the editor's own path (so it can be undone), and an answer to the open question.
+	void ToolSlider(const std::string& a_key, float a_value);
+	void ToolAnswer(bool a_yes);
 
 	std::string StateJson();
 }

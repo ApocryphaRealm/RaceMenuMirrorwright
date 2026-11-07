@@ -23,4 +23,6 @@ Written as changes happen, not reconstructed afterwards (rule 61). Each version 
 - Font Awesome icons on the rail, Undo / Redo / Reset / Done, the preset buttons, Light, Turn, search and the switch.
 - Turning turns the player's own heading (RaceMenu's Scaleform rotation gave no value in the second run); held keys and the stick add up into one turn per frame.
 - The INI key for passing sliders to the game is now bGameSliderCalls (default 1): an installed INI from the first build kept bEngineSliderCalls = 0, which switched the sliders off.
+- The confirmation boxes (Done, Reset, Load, replace, delete) answer Enter, Space and the pad's A, and Esc and the pad's B, read by the box itself; the press that opened a box never answers it.
+- DevBench: slider changes go through the editor's own path, so they can be undone; op=confirm / op=cancel answer the open question; op=choose name=<race>.
 - Renamed RaceMenu Mirrorwright (working name Likeness): DLL, INI, log and translation files are RaceMenuMirrorwright.*, the DevBench tool is mirrorwright.control.

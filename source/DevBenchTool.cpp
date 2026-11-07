@@ -121,16 +121,37 @@ namespace DevBenchTool
 				if (callback.empty() || !value) { out = R"({"ok":false,"error":"op=slider needs callback and value"})"; }
 				else
 				{
-					bridge::SetSlider(callback, static_cast<float>(*value));
+					editor::ToolSlider(callback, static_cast<float>(*value));   // the editor's path: recorded for Undo (test run 3)
 					std::this_thread::sleep_for(std::chrono::milliseconds(300));
 					out = State();
 				}
 			}
+			else if (op == "confirm" || op == "cancel")
+			{
+				editor::ToolAnswer(op == "confirm");
+				std::this_thread::sleep_for(std::chrono::milliseconds(300));
+				out = State();
+			}
 			else if (op == "choose")
 			{
-				const auto list = NumberFrom(args, "list");
-				const auto index = NumberFrom(args, "index");
-				if (!list || !index) { out = R"({"ok":false,"error":"op=choose needs list and index"})"; }
+				auto list = NumberFrom(args, "list");
+				auto index = NumberFrom(args, "index");
+				if (const std::string n = StringFrom(args, "name"); !n.empty())
+				{
+					const auto snap = bridge::Copy();
+					for (const auto& r : snap.model.races)
+					{
+						if (_stricmp(r.label.c_str(), n.c_str()) == 0)
+						{
+							list = static_cast<long>(r.list);
+							index = static_cast<long>(r.index);
+							break;
+						}
+					}
+					if (!index) { out = std::format(R"({{"ok":false,"error":"no race or choice named '{}'"}})", bridge::Escape(n)); }
+				}
+				if (!out.empty()) {}
+				else if (!list || !index) { out = R"({"ok":false,"error":"op=choose needs name, or list and index"})"; }
 				else
 				{
 					const auto before = bridge::Copy().serial;
@@ -192,7 +213,7 @@ namespace DevBenchTool
 			"onItemPress owner, the Done function, panels hidden) and every list found in the movie. op=probe: read RaceMenu again. op=list list=<i> from count: a "
 			"list's entries with their strings and numbers. op=plugins: _global.skse.plugins members and the game's own handlers for the menu. op=model from count: "
 			"categories, races, sliders (callback, value, range, open value, engine), function members. op=slider key=<slider key from op=model> value=<n>: move a slider as the "
-			"editor does. op=choose list=<i> index=<n>: press a race or choice entry through onItemPress. op=category index=<n>: pick a rail entry. op=done: press "
+			"editor does. op=choose name=<race or choice> (or list=<i> index=<n>): press it through onItemPress. op=confirm / op=cancel: answer the open question (Done, Reset, Load...). op=category index=<n>: pick a rail entry. op=done: press "
 			"Done. op=presets: the preset folder and files. op=show / op=hide / op=switch: the editor window. op=reload: re-read the INI.\","
 			"\"inputSchema\":{\"type\":\"object\",\"properties\":{\"op\":{\"type\":\"string\"},\"list\":{\"type\":\"integer\"},\"index\":{\"type\":\"integer\"},"
 			"\"from\":{\"type\":\"integer\"},\"count\":{\"type\":\"integer\"},\"callback\":{\"type\":\"string\"},\"value\":{\"type\":\"number\"}},\"additionalProperties\":true},"
