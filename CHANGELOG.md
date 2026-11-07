@@ -55,4 +55,5 @@ Written as changes happen, not reconstructed afterwards (rule 61). Each version 
 - The focused button is drawn white with dark text, like the confirmation boxes.
 - Every text item fits its parent: rail names, slider labels, the search hint and preset names are shortened with "..." and shown in full in a tooltip; a narrow rail shows icons only.
 - A colour row with no known colour draws no square (no grey placeholder).
+- An icon-only rail draws the icon as the item itself, so the highlight sits behind it; buttons have more room round their text; no button looks focused until the player navigates; the editor window takes the input focus when it opens, is shown, or changes category.
 - Renamed RaceMenu Mirrorwright (working name Likeness): DLL, INI, log and translation files are RaceMenuMirrorwright.*, the DevBench tool is mirrorwright.control.

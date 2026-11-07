@@ -50,6 +50,7 @@ namespace editor
 		std::atomic<bool> g_finishRequested{ false };
 		std::atomic<bool> g_showWhenConsoleCloses{ false };
 		std::atomic<bool> g_showWhenBoxCloses{ false };
+		std::atomic<bool> g_wantFocus{ true };   // give the editor window the input focus at its next frame (run 14: first R3 lost)
 		std::atomic<bool> g_finishing{ false };   // ConfirmDone sent: the game's own finish / name boxes own the input
 		std::atomic<int> g_toolAnswer{ 0 };      // 1 confirm, 2 cancel: DevBench's answer to the open question
 		std::atomic<bool> g_questionOpen{ false };
@@ -160,7 +161,7 @@ namespace editor
 				"igIsKeyPressed_Bool", "igIsItemHovered", "igSetTooltipV", "igPushItemWidth", "igPopItemWidth",
 				"igOpenPopup_Str", "igBeginPopupModal", "igEndPopup", "igCloseCurrentPopup", "igSetItemDefaultFocus",
 				"igInputTextWithHint", "igBeginDisabled", "igEndDisabled", "igGetContentRegionAvail", "igBeginTable", "igTableNextColumn",
-				"igEndTable", "igIsWindowAppearing", "igCalcTextSize", "igGetStyle", "igDummy", "igTextColoredV", "igIsItemFocused", "igPushStyleColor_Vec4", "igPopStyleColor", "igPushStyleVar_Float", "igPopStyleVar",
+				"igEndTable", "igIsWindowAppearing", "igSetNextWindowFocus", "igCalcTextSize", "igGetStyle", "igDummy", "igTextColoredV", "igIsItemFocused", "igPushStyleColor_Vec4", "igPopStyleColor", "igPushStyleVar_Float", "igPopStyleVar",
 				"igSliderFloat", "igIsKeyDown_Nil", "igIsMouseDown_Nil", "igIsMouseClicked_Bool",
 				"igGetCursorScreenPos", "igGetWindowDrawList", "igGetFrameHeight", "igInvisibleButton", "igPushID_Str", "igPopID",
 				"ImDrawList_AddRectFilled", "ImDrawList_AddCircleFilled"
@@ -239,6 +240,8 @@ namespace editor
 
 		float Spacing() { return ImGuiMCP::GetStyle() ? ImGuiMCP::GetStyle()->ItemSpacing.x : 8.0F; }
 		float PadX() { return ImGuiMCP::GetStyle() ? ImGuiMCP::GetStyle()->FramePadding.x : 4.0F; }
+		// Extra room each side of a button's text (run 14: the white focus fill touched the "t" of Light).
+		constexpr float kButtonRoom = 6.0F;
 
 		// Places an item of width a_w in the current row (SameLine when it fits). Outside a row it does nothing.
 		void FlowPlace(float a_w)
@@ -283,7 +286,8 @@ namespace editor
 		void FocusStylePush(const std::string& a_id, int& a_pushed)
 		{
 			a_pushed = 0;
-			if (a_id != g_focusedLast) { return; }
+			auto* io = ImGuiMCP::GetIO();
+			if (a_id != g_focusedLast || !io || !io->NavVisible) { return; }   // run 14: Light looked focused on open, before any input
 			const ImGuiMCP::ImVec4 white(1.0F, 1.0F, 1.0F, 1.0F), dark(0.05F, 0.05F, 0.05F, 1.0F);
 			ImGuiMCP::PushStyleColor(ImGuiMCP::ImGuiCol_Button, white);
 			ImGuiMCP::PushStyleColor(ImGuiMCP::ImGuiCol_ButtonHovered, white);
@@ -301,12 +305,13 @@ namespace editor
 		{
 			const float line = g_flow.active ? g_flow.maxW : ImGuiMCP::GetContentRegionAvail().x;
 			bool cut = false;
-			const std::string text = Ellipsize(a_label, std::max(10.0F, line - IconWidth() - 2.0F * PadX()), cut);
-			FlowPlace(IconWidth() + ImGuiMCP::CalcTextSize(text.c_str()).x + 2.0F * PadX());
+			const std::string text = Ellipsize(a_label, std::max(10.0F, line - IconWidth() - 2.0F * (PadX() + kButtonRoom)), cut);
+			const float bw = ImGuiMCP::CalcTextSize(text.c_str()).x + 2.0F * (PadX() + kButtonRoom);
+			FlowPlace(IconWidth() + bw);
 			Icon(a_cp);
 			int pushed = 0;
 			FocusStylePush(a_label, pushed);
-			const bool hit = ImGuiMCP::Button((text + "###" + a_label).c_str());
+			const bool hit = ImGuiMCP::Button((text + "###" + a_label).c_str(), ImGuiMCP::ImVec2(bw, 0.0F));
 			FocusStyleNote(a_label, pushed);
 			if (cut && ImGuiMCP::IsItemHovered()) { ImGuiMCP::SetTooltip("%s", a_label); }
 			return hit;
@@ -317,11 +322,12 @@ namespace editor
 		{
 			const float line = g_flow.active ? g_flow.maxW : ImGuiMCP::GetContentRegionAvail().x;
 			bool cut = false;
-			const std::string text = Ellipsize(a_label, std::max(10.0F, line - 2.0F * PadX()), cut);
-			FlowPlace(ImGuiMCP::CalcTextSize(text.c_str()).x + 2.0F * PadX());
+			const std::string text = Ellipsize(a_label, std::max(10.0F, line - 2.0F * (PadX() + kButtonRoom)), cut);
+			const float bw = ImGuiMCP::CalcTextSize(text.c_str()).x + 2.0F * (PadX() + kButtonRoom);
+			FlowPlace(bw);
 			int pushed = 0;
 			FocusStylePush(a_label, pushed);
-			const bool hit = ImGuiMCP::Button((text + "###" + a_label).c_str());
+			const bool hit = ImGuiMCP::Button((text + "###" + a_label).c_str(), ImGuiMCP::ImVec2(bw, 0.0F));
 			FocusStyleNote(a_label, pushed);
 			if (cut && ImGuiMCP::IsItemHovered()) { ImGuiMCP::SetTooltip("%s", a_label); }
 			return hit;
@@ -776,6 +782,11 @@ namespace editor
 			const auto flags = ImGuiMCP::ImGuiWindowFlags_NoCollapse | ImGuiMCP::ImGuiWindowFlags_NoMove | ImGuiMCP::ImGuiWindowFlags_NoResize |
 			                   ImGuiMCP::ImGuiWindowFlags_NoSavedSettings;
 			const std::string title = std::string(NTR("RMM_Title", "{name}")) + "###MirrorwrightEditor";
+			if (g_wantFocus.exchange(false))
+			{
+				ImGuiMCP::SetNextWindowFocus();
+				logger::debug("editor window takes the input focus");
+			}
 			if (ImGuiMCP::Begin(title.c_str(), nullptr, flags))
 			{
 				ImGuiMCP::SetWindowFontScale(std::clamp(settings::scale, 0.5F, 2.0F));
@@ -848,14 +859,28 @@ namespace editor
 					for (int i = 0; i < static_cast<int>(rail.size()); ++i)
 					{
 						const auto& item = rail[static_cast<std::size_t>(i)];
-						Icon(item.kind == RailItem::Kind::kDiscovery ? fa::kDiscovery : item.kind == RailItem::Kind::kChoices ? fa::kChoices : CategoryIcon(item.flag, item.label));
-						// A narrow rail shows icons only; otherwise the label is shortened to the rail with the full name as a tooltip.
+						const unsigned glyph = item.kind == RailItem::Kind::kDiscovery ? fa::kDiscovery : item.kind == RailItem::Kind::kChoices ? fa::kChoices : CategoryIcon(item.flag, item.label);
+						// A narrow rail shows icons only - the icon is then the selectable's own label, so the highlight sits behind it
+						// (run 14: it sat beside the icon). Otherwise the label is shortened to the rail with the full name as a tooltip.
 						const float room = ImGuiMCP::GetContentRegionAvail().x;
+						const bool iconOnly = room < ImGuiMCP::GetFrameHeight() * 4.0F;
 						bool cut = false;
-						const std::string shown = room < ImGuiMCP::GetFrameHeight() * 2.5F ? std::string() : Ellipsize(item.label, std::max(10.0F, room), cut);
-						const std::string label = shown + "##rail" + std::to_string(i);
-						const bool picked = ImGuiMCP::Selectable(label.c_str(), !searching && i == category);
-						if ((cut || shown.empty()) && ImGuiMCP::IsItemHovered()) { ImGuiMCP::SetTooltip("%s", item.label.c_str()); }
+						std::string shown;
+						bool picked = false;
+						static const bool haveFa = GetMenuFrameworkFunction<void*>("PushSolid") && GetMenuFrameworkFunction<void*>("Pop");
+						if (iconOnly && haveFa)
+						{
+							FontAwesome::PushSolid();
+							picked = ImGuiMCP::Selectable((Glyph(glyph) + "##rail" + std::to_string(i)).c_str(), !searching && i == category);
+							FontAwesome::Pop();
+						}
+						else
+						{
+							Icon(glyph);
+							shown = Ellipsize(item.label, std::max(10.0F, ImGuiMCP::GetContentRegionAvail().x), cut);
+							picked = ImGuiMCP::Selectable((shown + "##rail" + std::to_string(i)).c_str(), !searching && i == category);
+						}
+						if ((cut || iconOnly) && ImGuiMCP::IsItemHovered()) { ImGuiMCP::SetTooltip("%s", item.label.c_str()); }
 						if (picked)
 						{
 							category = i;
@@ -1257,6 +1282,7 @@ namespace editor
 			std::scoped_lock guard(g_whyLock);
 			g_lastWhy = a_why ? a_why : "?";
 		}
+		if (a_shown) { g_wantFocus = true; }
 		if (was != a_shown)
 		{
 			logger::info("editor {} ({})", a_shown ? "shown" : "hidden", a_why ? a_why : "?");
@@ -1343,6 +1369,7 @@ namespace editor
 	{
 		std::scoped_lock guard(g_whyLock);
 		g_pendingCategory = a_name;
+		g_wantFocus = true;
 	}
 
 	void OnSwitchKey(const char* a_source)
@@ -1366,7 +1393,11 @@ namespace editor
 
 	void RequestFinish() { g_finishRequested = true; }
 
-	void SelectCategory(int a_index) { g_category = a_index; }
+	void SelectCategory(int a_index)
+	{
+		g_category = a_index;
+		g_wantFocus = true;
+	}
 
 	std::string StateJson()
 	{

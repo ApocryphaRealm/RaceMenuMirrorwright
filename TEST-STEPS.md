@@ -1,22 +1,28 @@
-# RaceMenu Mirrorwright 1.0.0 - fourteenth check: R3 by XInput, focus style, text fitting, F4
+# RaceMenu Mirrorwright 1.0.0 - fifteenth check: the four small fixes, and Milestone 5 probes
 
 Build: `7. current test builds\Skyrim - RaceMenu Mirrorwright\RaceMenu Mirrorwright 1.0.0` (repackaged), Line-SE-AE16,
 installed over `test RaceMenu Mirrorwright 1.0.0` inside the batch. RaceMenu + AMF on, Atelier and its patch off,
 Apprentice on, throwaway save, camera facing the front. Keep `uLogLevel = 1`. Tool `mirrorwright.control`.
-Passed (runs 1-13): zoom by op=closeup and Z; rows wrap; grey unused tints; pad A / D-pad reach ImGui.
+Passed (runs 1-14): see the run folders; run 14 - R3 zoom, narrow width, no hair square, white focus fill.
 
-1. Log at the first RaceMenu frame: `R3: reading the pad through xinput1_?.dll (already loaded)` (or `no XInput DLL is
-   loaded`). Then pad R3 (gamelink right thumb). EXPECTED: `R3 down (XInput buttons 0x0080)`, `zoom from R3 (XInput
-   poll)`, `zoom: ...handleInput(keyDown 56) called -> true`; the zoom toggles. Twice: out, then in - one per press.
-2. Pad navigation onto a button (A / D-pad as in run 13): the focused button is filled white with dark text. EXPECTED: no
-   blue rectangle. If a blue (or theme-coloured) frame is still drawn round it, report it with a screenshot - that frame
-   comes from the menu framework itself (AMF draws its own highlight frame round the pad-focused item), not from this mod.
-3. With pad focus on a button, press F4 (real keyboard if possible; bench.input as well). EXPECTED: the editor switches to
-   RaceMenu's own interface; log `editor hidden (keyboard (OS))` or `(editor window)`. F4 again brings it back.
-4. Settings > Panel width 0.20, `showracemenu`: the rail shows icons only (hover: the name); slider labels too long for
-   the content end in "..." with the full name as a tooltip; the search hint is shortened with "..."; nothing is cut off
-   mid-word. Preset names in the scene panel likewise. Screenshot, then back to 0.30.
-5. Hair: the Hair Color row shows no square (no colour on the row) unless RaceMenu filled one in; log `swatch Hair Color:
-   no colour on the row - no square` or `the row's own colour #......`. Other colour rows keep their squares.
-6. Still for a real mouse when possible: drag turning; presets save / replace / load / delete.
-7. No crash. Send the log and screenshots.
+## A. Fixes
+
+1. Open RaceMenu: EXPECTED no button looks focused (Light is not white) until a pad / arrow key moves the focus. Log
+   `editor window takes the input focus`. Screenshot right after opening.
+2. Move the pad focus to Light: white fill with clear room round the text (the "t" does not touch the edge). Screenshot.
+3. Settings > Panel width 0.20: in the icon-only rail the selected item's highlight sits **behind** its icon (e.g. the
+   scissors for Hair), not beside it. Screenshot. Back to 0.30.
+4. `op=category name=Head`, then about 1.5 s later R3 (one press). EXPECTED: the zoom toggles at the FIRST press, log
+   `zoom from R3 ...`. Repeat after `op=category name=Hair`.
+
+## B. Milestone 5 probes (send the JSON; files are written - use a throwaway profile)
+
+5. `op=call path=CharGen.ExportHead a0="MW Probe"`. EXPECTED: ok=true; then check whether
+   `SKSE\Plugins\CharGen\MW Probe.nif` and `.dds` exist (Overwrite). Send the JSON and the file list.
+6. `op=call path=CharGen.SavePreset a0="MW Probe"`. EXPECTED: ok=true; check whether
+   `SKSE\Plugins\CharGen\Presets\MW Probe.jslot` exists. Send the JSON.
+7. `op=call path=CharGen.GetSliderData`, `op=call path=CharGen.GetModName a0=0`. EXPECTED: ok=true; send the result
+   shapes (for the remaining RaceMenu tools).
+
+8. Still for a real keyboard / mouse when possible: F4 with pad focus; drag turning; presets in the panel.
+9. No crash. Send the log, screenshots and the JSON.
