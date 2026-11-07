@@ -179,6 +179,7 @@ namespace DevBenchTool
 				std::this_thread::sleep_for(std::chrono::milliseconds(300));
 				out = State();
 			}
+			else if (op == "spy") { out = bridge::SpyJson(); }
 			else if (op == "members")
 			{
 				// e.g. path=_root.RaceSexMenuBaseInstance.RaceSexPanelsInstance.racePanel.itemList._entryList.60 (a slider row)
@@ -247,7 +248,7 @@ namespace DevBenchTool
 			"list's entries with their strings and numbers. op=plugins: _global.skse.plugins members and the game's own handlers for the menu. op=model from count: "
 			"categories, races, sliders (callback, value, range, open value, engine), function members. op=slider key=<slider key from op=model> value=<n>: move a slider as the "
 			"editor does. op=choose name=<race or choice> (or list=<i> index=<n>) [route=auto|changerace|<clip path>]: press it (the log names raceID, filteredIndex, itemIndex and the owner used). op=confirm / op=cancel: answer the open question (Done, Reset, Load...). op=category index=<n>: pick a rail entry. op=done: press "
-			"Done. op=presets: the preset folder and files. op=closeup: toggle the face close-up. op=members path=<AS path>: every member of it with type and value. op=call path=<owner.function> a0..a3: call an AS function and report the result (probe). op=show / op=hide / op=switch: the editor window. op=reload: re-read the INI.\","
+			"Done. op=presets: the preset folder and files. op=closeup: toggle the face close-up. op=members path=<AS path>: every member of it with type and value. op=call path=<owner.function> a0..a3: call an AS function and report the result (probe; RaceMenu plugin functions only as argument-less Get*). op=spy: log RaceMenu's own calls to CharGen's preset / export functions with their arguments. op=show / op=hide / op=switch: the editor window. op=reload: re-read the INI.\","
 			"\"inputSchema\":{\"type\":\"object\",\"properties\":{\"op\":{\"type\":\"string\"},\"list\":{\"type\":\"integer\"},\"index\":{\"type\":\"integer\"},"
 			"\"from\":{\"type\":\"integer\"},\"count\":{\"type\":\"integer\"},\"callback\":{\"type\":\"string\"},\"value\":{\"type\":\"number\"}},\"additionalProperties\":true},"
 			"\"readOnly\":false"

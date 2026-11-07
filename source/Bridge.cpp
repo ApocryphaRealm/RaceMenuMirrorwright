@@ -1215,6 +1215,20 @@ namespace bridge
 	std::string CallJson(const std::string& a_path, const std::vector<std::string>& a_args)
 	{
 		const std::string full = a_path.starts_with("CharGen.") || a_path.starts_with("NiOverride.") ? "_global.skse.plugins." + a_path : a_path;
+		// Run 15: CharGen.SavePreset("MW Probe") crashed the game inside skee64 (its deliberate stop on a bad call). RaceMenu's
+		// plugin functions are only called with a signature already seen in RaceMenu's own calls (op=spy records them);
+		// until then only argument-less getters may be probed.
+		if (full.find("skse.plugins.") != std::string::npos)
+		{
+			const std::string fn = full.substr(full.rfind('.') + 1);
+			const bool getter = fn.starts_with("Get") && a_args.empty();
+			if (!getter)
+			{
+				logger::warn("probe call {} refused: no known signature for RaceMenu's plugin function (op=spy records RaceMenu's own calls)", full);
+				return std::format(R"({{"ok":false,"error":"refused: {} has no known signature yet - only argument-less Get functions may be probed; use op=spy and RaceMenu's own interface to record how it is called"}})",
+					Escape(full));
+			}
+		}
 		return OnUI([a_path = full, a_args]() -> std::string {
 			RE::GFxMovieView* movie = Movie();
 			const auto dot = a_path.rfind('.');
@@ -1243,6 +1257,88 @@ namespace bridge
 			}
 			logger::info("probe call {}({} args): {} -> {}", a_path, a_args.size(), ok ? "ok" : "failed", Describe(result));
 			return std::format(R"({{"ok":{},"path":"{}","result":"{}","members":{{{}}}}})", ok, Escape(a_path), Escape(Describe(result)), members);
+		});
+	}
+
+	namespace
+	{
+		constexpr const char* kSpied[] = { "SavePreset", "LoadPreset", "ReadPreset", "ExportHead", "ImportHead", "LoadImportedHead" };
+
+		std::string DescribeDeep(const RE::GFxValue& a_v)
+		{
+			std::string out = Describe(a_v);
+			if (a_v.IsArray())
+			{
+				out += " [";
+				for (std::uint32_t i = 0; i < std::min<std::uint32_t>(a_v.GetArraySize(), 8); ++i)
+				{
+					RE::GFxValue e;
+					a_v.GetElement(i, &e);
+					out += (i ? ", " : "") + Describe(e);
+				}
+				out += "]";
+			}
+			else if (a_v.IsObject())
+			{
+				out += " {";
+				bool first = true;
+				a_v.VisitMembers([&](const char* a_name, const RE::GFxValue& a_m) {
+					if (!a_name || out.size() > 600) { return; }
+					out += std::format("{}{}: {}", first ? "" : ", ", a_name, Describe(a_m));
+					first = false;
+				});
+				out += "}";
+			}
+			return out;
+		}
+
+		// Logs RaceMenu's own call to a CharGen function - the argument count and each argument's type and value - then calls
+		// the original, unchanged, with the same arguments. Observing a public interface's calls; nothing of RaceMenu is copied.
+		class SpyHandler final : public RE::GFxFunctionHandler
+		{
+		public:
+			void Call(Params& a_params) override
+			{
+				const auto index = reinterpret_cast<std::uintptr_t>(a_params.userData);
+				const char* name = index < std::size(kSpied) ? kSpied[index] : "?";
+				std::string args;
+				for (std::uint32_t i = 0; i < a_params.argCount; ++i) { args += std::format("{}#{} {}", i ? "; " : "", i, DescribeDeep(a_params.args[i])); }
+				logger::info("spy: CharGen.{}({} args): {}", name, a_params.argCount, args);
+				if (a_params.thisPtr && a_params.thisPtr->IsObject())
+				{
+					a_params.thisPtr->Invoke((std::string("__mw_orig_") + name).c_str(), a_params.retVal, a_params.args, a_params.argCount);
+					if (a_params.retVal) { logger::info("spy: CharGen.{} returned {}", name, DescribeDeep(*a_params.retVal)); }
+				}
+				else { logger::warn("spy: CharGen.{} called without its object; the original could not be called", name); }
+			}
+		};
+	}
+
+	std::string SpyJson()
+	{
+		return OnUI([]() -> std::string {
+			RE::GFxMovieView* movie = Movie();
+			RE::GFxValue chargen;
+			if (!movie || !movie->GetVariable(&chargen, "_global.skse.plugins.CharGen") || !chargen.IsObject())
+			{
+				return R"({"ok":false,"error":"skse.plugins.CharGen is not there"})";
+			}
+			static SpyHandler* handler = new SpyHandler();   // lives for the session; the movie holds references to it
+			std::string wrapped;
+			for (std::size_t i = 0; i < std::size(kSpied); ++i)
+			{
+				const std::string orig = std::string("__mw_orig_") + kSpied[i];
+				RE::GFxValue existing, original;
+				if (chargen.GetMember(orig.c_str(), &existing) && existing.IsObject()) { continue; }   // already wrapped
+				if (!chargen.GetMember(kSpied[i], &original) || !original.IsObject()) { continue; }
+				chargen.SetMember(orig.c_str(), original);
+				RE::GFxValue fn;
+				movie->CreateFunction(&fn, handler, reinterpret_cast<void*>(i));
+				chargen.SetMember(kSpied[i], fn);
+				wrapped += std::format("{}\"{}\"", wrapped.empty() ? "" : ",", kSpied[i]);
+			}
+			logger::info("spy: watching CharGen's preset and export functions ({})", wrapped.empty() ? "already watched" : wrapped);
+			return std::format(R"({{"ok":true,"wrapped":[{}]}})", wrapped);
 		});
 	}
 

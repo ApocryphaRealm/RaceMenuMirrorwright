@@ -144,5 +144,6 @@ namespace bridge
 	std::string Escape(const std::string& a_text);
 	// DevBench probes for the data only the game has (UI thread, waits up to 5 s).
 	std::string MembersJson(const std::string& a_path);
+	std::string SpyJson();   // wrap CharGen's preset / export functions to log RaceMenu's own calls (signatures)
 	std::string CallJson(const std::string& a_path, const std::vector<std::string>& a_args);
 }

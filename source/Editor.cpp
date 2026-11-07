@@ -161,7 +161,7 @@ namespace editor
 				"igIsKeyPressed_Bool", "igIsItemHovered", "igSetTooltipV", "igPushItemWidth", "igPopItemWidth",
 				"igOpenPopup_Str", "igBeginPopupModal", "igEndPopup", "igCloseCurrentPopup", "igSetItemDefaultFocus",
 				"igInputTextWithHint", "igBeginDisabled", "igEndDisabled", "igGetContentRegionAvail", "igBeginTable", "igTableNextColumn",
-				"igEndTable", "igIsWindowAppearing", "igSetNextWindowFocus", "igCalcTextSize", "igGetStyle", "igDummy", "igTextColoredV", "igIsItemFocused", "igPushStyleColor_Vec4", "igPopStyleColor", "igPushStyleVar_Float", "igPopStyleVar",
+				"igEndTable", "igIsWindowAppearing", "igSetCursorScreenPos", "igGetColorU32_Col", "igSetNextWindowFocus", "igCalcTextSize", "igGetStyle", "igDummy", "igTextColoredV", "igIsItemFocused", "igPushStyleColor_Vec4", "igPopStyleColor", "igPushStyleVar_Float", "igPopStyleVar",
 				"igSliderFloat", "igIsKeyDown_Nil", "igIsMouseDown_Nil", "igIsMouseClicked_Bool",
 				"igGetCursorScreenPos", "igGetWindowDrawList", "igGetFrameHeight", "igInvisibleButton", "igPushID_Str", "igPopID",
 				"ImDrawList_AddRectFilled", "ImDrawList_AddCircleFilled"
@@ -796,6 +796,11 @@ namespace editor
 				if (ctrl && ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_Z, false)) { Undo(); }
 				if (ctrl && ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_Y, false)) { Redo(); }
 				if (ctrl && ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_F, false)) { g_focusSearch = true; }
+				// Our own edge on the R3 key state (run 15: IsKeyPressed missed the first press after a category change).
+				static bool r3Was = false;
+				const bool r3 = ImGuiMCP::IsKeyDown(ImGuiMCP::ImGuiKey_GamepadR3);
+				if (r3 && !r3Was) { OnPadZoom("editor window (ImGui R3)"); }
+				r3Was = r3;
 				const bool typing = io && io->WantTextInput;
 				if (!typing && !ctrl)
 				{
@@ -808,7 +813,6 @@ namespace editor
 					if (turn != 0.0F) { bridge::TurnBy(turn * settings::turnSpeed / 0.35F); }
 					if (ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_L, false)) { bridge::ToggleLight(); }
 					if (ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_Z, false)) { bridge::ToggleCloseUp(); }
-					if (ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_GamepadR3, false)) { OnPadZoom("editor window (ImGui R3)"); }
 					if (ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_R, false) || ImGuiMCP::IsKeyPressed(ImGuiMCP::ImGuiKey_GamepadFaceLeft, false)) { g_finishRequested = true; }
 				}
 
@@ -870,9 +874,26 @@ namespace editor
 						static const bool haveFa = GetMenuFrameworkFunction<void*>("PushSolid") && GetMenuFrameworkFunction<void*>("Pop");
 						if (iconOnly && haveFa)
 						{
+							// Run 15: a Selectable's highlight spans the line, not the icon. So the cell is drawn by hand: a square
+							// the icon's size, its highlight behind, the glyph centred in it.
+							const float cell = ImGuiMCP::GetFrameHeight() * 1.3F;
+							const ImGuiMCP::ImVec2 at = ImGuiMCP::GetCursorScreenPos();
+							picked = ImGuiMCP::InvisibleButton(("##rail" + std::to_string(i)).c_str(), ImGuiMCP::ImVec2(cell, cell));
+							const bool hovered = ImGuiMCP::IsItemHovered() || ImGuiMCP::IsItemFocused();
+							const bool selected = !searching && i == category;
+							if ((selected || hovered) && ImGuiMCP::GetWindowDrawList())
+							{
+								const auto col = ImGuiMCP::GetColorU32(selected ? ImGuiMCP::ImGuiCol_Header : ImGuiMCP::ImGuiCol_HeaderHovered, 1.0F);
+								ImGuiMCP::ImDrawListManager::AddRectFilled(ImGuiMCP::GetWindowDrawList(), at, ImGuiMCP::ImVec2(at.x + cell, at.y + cell), col, 3.0F, 0);
+							}
+							const ImGuiMCP::ImVec2 after = ImGuiMCP::GetCursorScreenPos();
 							FontAwesome::PushSolid();
-							picked = ImGuiMCP::Selectable((Glyph(glyph) + "##rail" + std::to_string(i)).c_str(), !searching && i == category);
+							const ImGuiMCP::ImVec2 gs = ImGuiMCP::CalcTextSize(Glyph(glyph).c_str());
+							ImGuiMCP::SetCursorScreenPos(ImGuiMCP::ImVec2(at.x + (cell - gs.x) * 0.5F, at.y + (cell - gs.y) * 0.5F));
+							ImGuiMCP::TextUnformatted(Glyph(glyph).c_str());
 							FontAwesome::Pop();
+							ImGuiMCP::SetCursorScreenPos(after);
+							ImGuiMCP::Dummy(ImGuiMCP::ImVec2(0.0F, 0.0F));
 						}
 						else
 						{
