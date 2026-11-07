@@ -44,4 +44,6 @@ Written as changes happen, not reconstructed afterwards (rule 61). Each version 
 - The colour swatch is drawn as a filled square on the window (run 9: the icon-font square drew nothing); the hair colour read is logged, and a row with no colour from the character keeps its own.
 - The close-up sits fCloseUpDistance (50) from the head along the original view and fCloseUpRaise (9) higher, so the eyes are centred (run 9: halfway was ~20 units, nose clipping).
 - The scene panel's buttons sit in two rows, so Turn right is no longer cut off.
+- Colour rows are recognised by their colour, their tint type or a colour callback, and every candidate row is logged with why it got a swatch or not; up to 64 members of a row are kept (24 could drop the colour member). Run 10 showed no swatch at all.
+- The close-up always moves in: to min(fCloseUpDistance = 28, 0.6 x the current distance) from the head point (feet + 123 + fCloseUpRaise), on the line to the camera, so the face stays centred (run 10: a fixed 50 moved the camera back).
 - Renamed RaceMenu Mirrorwright (working name Likeness): DLL, INI, log and translation files are RaceMenuMirrorwright.*, the DevBench tool is mirrorwright.control.

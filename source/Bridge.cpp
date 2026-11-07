@@ -148,12 +148,12 @@ namespace bridge
 							{
 								std::string s = Utf8(a_member);
 								if (entry.label.empty()) { entry.label = s; }
-								if (entry.strs.size() < 24) { entry.strs.emplace_back(a_name, std::move(s)); }
+								if (entry.strs.size() < 64) { entry.strs.emplace_back(a_name, std::move(s)); }
 							}
 							else if (a_member.IsNumber() || a_member.IsBool())
 							{
 								const double v = a_member.IsBool() ? (a_member.GetBool() ? 1.0 : 0.0) : a_member.GetNumber();
-								if (entry.nums.size() < 24) { entry.nums.emplace_back(a_name, v); }
+								if (entry.nums.size() < 64) { entry.nums.emplace_back(a_name, v); }
 								if (entry.numbers.size() < 160)
 								{
 									if (!entry.numbers.empty()) { entry.numbers += ' '; }
@@ -399,7 +399,18 @@ namespace bridge
 						s.key = s.callback + "|" + (std::isnan(s.sliderID) ? e.label : std::format("{:g}", s.sliderID));
 						s.engine = std::binary_search(m.engineCallbacks.begin(), m.engineCallbacks.end(), s.callback);
 						if (const double* tt = Num(e, "tintType")) { s.tintType = static_cast<int>(*tt); }
-						if (const double* fc = Num(e, "fillColor")) { s.colour = true; s.fill = static_cast<std::uint32_t>(*fc) & 0xFFFFFF; }
+						const double* fc = Num(e, "fillColor");
+						const bool colourCallback = s.callback == "ChangeHairColorPreset" || s.callback == "ChangeTintingMask" || s.callback == "ChangeMaskColor";
+						if (fc || s.tintType >= 0 || colourCallback)
+						{
+							s.colour = true;
+							s.fill = fc ? static_cast<std::uint32_t>(*fc) & 0xFFFFFF : 0x808080;
+						}
+						if (fc || s.tintType >= 0 || colourCallback || Str(e, "hasColor") || Num(e, "hasColor"))
+						{
+							logger::info("swatch row {} ({}): fillColor={} tintType={} colourCallback={} -> swatch {}", s.label, s.callback,
+								fc ? std::format("#{:06X}", static_cast<std::uint32_t>(*fc) & 0xFFFFFF) : std::string("none"), s.tintType, colourCallback, s.colour);
+						}
 						m.sliders.push_back(std::move(s));
 						continue;
 					}
@@ -1088,17 +1099,20 @@ namespace bridge
 				std::copy(std::begin(c), std::end(c), std::begin(g_savedCam));
 				// Run 9: halfway landed ~20 units from the face (mouth and chin, nose clipping). Now fCloseUpDistance from the head's
 				// axis along the original view direction, raised fCloseUpRaise so the eyes are in the middle.
-				const double dx = c[0] - p[0], dy = c[1] - p[1];
-				const double len = std::sqrt(dx * dx + dy * dy);
-				const double dist = std::clamp(static_cast<double>(settings::closeUpDistance), 20.0, 200.0);
+				// Run 10: RaceMenu's camera already sits ~44 units from the player, so a fixed 50 moved it back. The close-up is
+				// always nearer: min(fCloseUpDistance, 0.6 x the current distance) from the head point (player x/y, feet + 123 +
+				// fCloseUpRaise), on the line from that point to the camera, so the face stays where the camera looks.
+				const double head[3] = { p[0], p[1], p[2] + 123.0 + settings::closeUpRaise };
+				const double d[3] = { c[0] - head[0], c[1] - head[1], c[2] - head[2] };
+				const double len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
 				if (len < 1.0)
 				{
-					logger::warn("close-up: the camera is on the player's axis; nothing to do");
+					logger::warn("close-up: the camera is at the head point; nothing to do");
 					return;
 				}
-				target[0] = p[0] + dx / len * dist;
-				target[1] = p[1] + dy / len * dist;
-				target[2] = c[2] + settings::closeUpRaise;
+				const double dist = std::min(std::clamp(static_cast<double>(settings::closeUpDistance), 10.0, 200.0), len * 0.6);
+				for (int i = 0; i < 3; ++i) { target[i] = head[i] + d[i] / len * dist; }
+				logger::info("close-up: {:.0f} units from the head point before, {:.0f} after", len, dist);
 			}
 			else { std::copy(std::begin(g_savedCam), std::end(g_savedCam), std::begin(target)); }
 			RE::GFxValue arg;
